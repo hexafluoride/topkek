@@ -1,0 +1,28 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 2013
+VisualStudioVersion = 12.0.31101.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Heimdall", "Heimdall\Heimdall.csproj", "{C33F33F4-928B-46A5-8150-B2C642B800EA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vindler", "Vindler\Vindler.csproj", "{99F22C20-4569-49FE-B7EE-9ECA238AC13B}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{C33F33F4-928B-46A5-8150-B2C642B800EA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C33F33F4-928B-46A5-8150-B2C642B800EA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C33F33F4-928B-46A5-8150-B2C642B800EA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C33F33F4-928B-46A5-8150-B2C642B800EA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{99F22C20-4569-49FE-B7EE-9ECA238AC13B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{99F22C20-4569-49FE-B7EE-9ECA238AC13B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{99F22C20-4569-49FE-B7EE-9ECA238AC13B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{99F22C20-4569-49FE-B7EE-9ECA238AC13B}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

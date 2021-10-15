@@ -1,0 +1,10 @@
+out/
+state/
+*.sh
+*.user
+*.json
+*.tmp
+.idea/
+bin/
+obj/
+packages/

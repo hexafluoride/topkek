@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net5.0</TargetFramework>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\ChatSharp\ChatSharp.csproj" />
+      <ProjectReference Include="..\ConversionTherapy\ConversionTherapy\ConversionTherapy.csproj" />
+      <ProjectReference Include="..\HeimdallBase\HeimdallBase.csproj" />
+      <ProjectReference Include="..\Heimdall\Heimdall\Heimdall.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
+    </ItemGroup>
+
+</Project>
