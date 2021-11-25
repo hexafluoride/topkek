@@ -154,8 +154,8 @@ namespace FarField
                 "Plotter"
             };
 
-            if (args.StartsWith(">plot"))
-                args = args.Substring(">plot".Length).Trim();
+            if (args.StartsWith(".plot"))
+                args = args.Substring(".plot".Length).Trim();
             else
                 args = args.Substring(".waplot".Length).Trim();
 

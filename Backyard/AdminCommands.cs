@@ -49,10 +49,10 @@ namespace Backyard
 
         private long GetRamForService(string serviceName)
         {
-            if (!File.Exists("/home/kate/Scripts/get-ram.sh"))
+            if (!File.Exists("./get-ram.sh"))
                 return -1;
 
-            var proc = Process.Start(new ProcessStartInfo("/home/kate/Scripts/get-ram.sh", serviceName)
+            var proc = Process.Start(new ProcessStartInfo("./get-ram.sh", serviceName)
             {
                 RedirectStandardOutput = true
             });

@@ -17,7 +17,7 @@ namespace CryptoData
         public static List<IExchange> Exchanges { get; set; } = new();
         public static RingBufferCollection Buffers { get; set; }
 
-        public static readonly int SIZE = 8640;
+        public static readonly int SIZE = 86400 * 7;
 
         public static bool Loaded = false;
 
@@ -25,27 +25,56 @@ namespace CryptoData
 
         public static DateTime EpochTime = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
-        public static void Init()
+        public static void Init(bool create_bufs = false)
         {
-            if (!Directory.Exists("./tickers") || Directory.GetFiles("./tickers", "*.buf").Length == 0)
+            if (!Directory.Exists("./tickers") || Directory.GetFiles("./tickers", "*.buf").Length == 0 || create_bufs)
             {
                 Log.Info("Creating buffer from scratch... DO NOT INTERRUPT");
 
                 //Stream = new FileStream(Filename, FileMode.OpenOrCreate);
                 Directory.CreateDirectory("./tickers/");
                 Buffers = new RingBufferCollection("./tickers/");
+                
+                Buffers.LoadBuffers();
+                
+                if (!Buffers.Buffers.ContainsKey(""))
+                    Buffers.AddBuffer("", 8);
 
-                Buffers.AddBuffer("", 8);
+                int q = 0;
+                int total = CryptoHandler.Pairs.Count;
+                int t = 0;
 
                 foreach(var pair in CryptoHandler.Pairs)
                 {
+                    t++;
                     string id = string.Join("_", pair.First, pair.Second, pair.Exchange);
                     //var buffer = RingBuffer.Create(Stream, SIZE);
+                    if (Buffers.Buffers.ContainsKey(id))
+                    {
+                        Log.Info($"Buffer {id} exists");
+                        continue;
+                    }
+                    
                     Buffers.AddBuffer(id, SIZE);
                     //buffer.Save();
 
-                    Log.Info("Added buffer {0}", id);
+                    Log.Info($"Added buffer {id} ({t}/{total})");
 
+                    //Buffers.Buffers[id].Save();
+                    q++;
+
+                    if (q % (Buffers.MaximumBufferCountPerFile / 2) == 0)
+                    {
+                        GC.Collect();
+                        if (Console.KeyAvailable)
+                        {
+                            Log.Info($"Shutting down...");
+                            Buffers.Save();
+                            Buffers.Files.ForEach(f => f.Flush());
+                            Buffers.Files.ForEach(f => f.Close());
+                            Environment.Exit(0);
+                        }
+                    }
                     //Stream.Flush();
                 }
 
@@ -66,9 +95,18 @@ namespace CryptoData
             {
                 while(true)
                 {
-                    Thread.Sleep(100000);
-                    int saved = Buffers.Save();
-                    Log.Debug("Saved {0} buffer entries.", saved);
+                    var buffers = Buffers.Buffers.Values.ToArray();
+                    for (int i = 0; i < buffers.Length; i++)
+                    {
+                        var buf = buffers[i];
+                        buf.Save();
+                        if (i % 30 == 0)
+                            Thread.Sleep(1000);
+                    }
+                    
+                    Thread.Sleep(1000);
+                    //int saved = Buffers.Save();
+                    //Log.Debug("Saved {0} buffer entries.", saved);
                 }
             });
         }

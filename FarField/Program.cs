@@ -26,6 +26,7 @@ namespace FarField
         public WeatherUtil WeatherUtil { get; set; }
         public TwitterUtil TwitterUtil { get; set; }
         private RedditUtil RedditUtil { get; set; }
+        private TwitchUtil TwitchUtil { get; set; }
         
         public void Start(string[] args)
         {
@@ -42,13 +43,15 @@ namespace FarField
                 {".tw ", TwitterSearch},
                 {".weather", GetWeather},
                 {".wa ", Wolfram},
+                {".plot ", WolframPlot},
                 {".fm", LastFm},
                 {".lastfm", LastFm},
                 {".resolve", ResolveLink},
                 {".horoscope", GetHoroscope},
                 {"http", MaybeResolveLink},
                 {"$uncache ", Uncache},
-                {".top", GetTopN}
+                {".top", GetTopN},
+                {".hypno", Hypno}
             };
             
             Init(args, FarFieldMain);
@@ -156,12 +159,16 @@ namespace FarField
             RedditUtil = new RedditUtil();
             RedditUtil.ObtainKey();
 
+            TwitchUtil = new TwitchUtil();
+            TwitchUtil.ObtainKey();
+
             HoroscopeUtil = new HoroscopeUtil();
             
             LinkResolver.AddResolver(new YoutubeLinkResolver(YoutubeUtil));
             LinkResolver.AddResolver(new TwitterResolver(TwitterUtil));
             LinkResolver.AddResolver(new SoundCloudResolver());
             LinkResolver.AddResolver(new RedditResolver(RedditUtil));
+            LinkResolver.AddResolver(new TwitchResolver(TwitchUtil));
             LinkResolver.AddResolver(new FourChanResolver());
         }
     }

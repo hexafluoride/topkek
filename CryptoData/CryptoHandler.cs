@@ -13,6 +13,8 @@ using Newtonsoft.Json.Linq;
 using NLog;
 using BasicBuffer;
 using System.Diagnostics;
+using System.Runtime.ConstrainedExecution;
+using NLog.Targets.Wrappers;
 using OsirisBase;
 
 namespace CryptoData
@@ -33,27 +35,565 @@ namespace CryptoData
         static List<IExchange> PeckingOrder = new List<IExchange>();
         public static Dictionary<string, IExchange> Exchanges = new();
 
-        public static void Init()
+        public static void Init(bool actually_connect = true)
         {
             Exchanges["Binance"] = new BinanceInstance();
+            Exchanges["Kucoin"] = new KucoinInstance();
             
             //PopulatePairGraph();
             //Bitfinex.PopulatePairGraph("./bitfinex-pairs.txt");
             (Exchanges["Binance"] as BinanceInstance).PopulatePairGraph();
+            (Exchanges["Kucoin"] as KucoinInstance).PopulatePairGraph();
 
-            foreach (var exchange in Exchanges.Values)
-            {
-                Task.Run(exchange.Connect);
-                Pairs.AddRange(exchange.ActualPairs.Select(p => new Ticker(p.Key, p.Value, exchange)));
-                //exchange.OnTickerUpdateReceived += TickerMan
-            }
+                foreach (var exchange in Exchanges.Values)
+                {
+                    if (actually_connect)
+                        Task.Run(exchange.Connect);
+                    Pairs.AddRange(exchange.ActualPairs.Select(p => new Ticker(p.Key, p.Value, exchange)));
+                    //exchange.OnTickerUpdateReceived += TickerMan
+                }
+            
 
             /*Task.Run((Action)Bitfinex.Connect);
             Task.Run((Action)Binance.Connect);*/
 
-            PeckingOrder = new List<IExchange>() { /*Bitfinex,*/ Exchanges["Binance"] };
+            PeckingOrder = new List<IExchange>() { /*Bitfinex,*/ Exchanges["Binance"], Exchanges["Kucoin"] };
             //Tickers = new HashSet<string>(Exchanges["Binance"].Currencies);
             Tickers = Exchanges.Values.SelectMany(e => e.Currencies).ToHashSet();
+        }
+
+        public static (string, string) GetBar(int start, int end, int high = -1, int low = -1)
+        {
+            var map = new char[] { ' ', '▁', '▂','▃','▄','▅','▆','▇','█' };
+            //var cope_map = new string[] { "🭶","🭷","🭸","🭹","🭺","🭻" };
+            var cope_map = new char[] { '⎺','⎻','⎼','⎽' };
+
+            bool color_inv = false;
+
+            if (end < start)
+            {
+                color_inv = true;
+                var temp = end;
+                end = start;
+                start = temp;
+            }
+
+            if (high > low)
+            {
+                var temp = high;
+                high = low;
+                low = temp;
+            }
+
+            var color_r = color_inv ? 'g' : 'r';
+            var color_i = color_inv ? 'j' : 'i';
+
+            var length = end - start;
+
+            
+            var start_full_offset = (int)Math.Floor(start / 9d);
+
+            var output = "";
+            var invert = "";
+
+            output += new string('█', start_full_offset);
+            invert += new string('0', start_full_offset);
+            
+            if (length < 9 && (start / 9 == end / 9))
+            {
+                if (length == 0)
+                {
+                    output += '█';
+                    invert += '0';
+                    goto final;
+                }
+                
+                if (length <= 2)
+                {
+                    var start_reindexed = (int)((start % 9d) / 9d * cope_map.Length);
+                    output += cope_map[start_reindexed];
+                    invert += color_r;
+                    goto final;
+                }
+                
+                repeat:
+                if (start % 9 == 0)
+                {
+                    output += map[8 - length];
+                    invert += color_i;
+                    goto final;
+                }
+                else if (end % 9 == 0)
+                {
+                    output += map[8 - length];
+                    invert += color_r;
+                    goto final;
+                }
+                else
+                {
+                    var start_dist = start - Math.Round(start / 9d);
+                    var end_dist = end - Math.Round(end / 9d);
+
+                    int nudge = start_dist > end_dist ? end % 9 : start % 9;
+                    
+                    start -= nudge;
+                    end -= nudge;
+                    goto repeat;
+                }
+            }
+            /*if (end - start < 9)
+            {
+                
+                return (new string(' ', start_full_offset) + map[(end - start)], new string(' ', start_full_offset) + (color_i));
+            }*/
+            
+            var start_fraction = 8 - (start % 9);
+            var consumed_by_start_fraction = 8 - (start % 9);
+            
+            var end_fraction = (end % 9);
+            var full_length = ((end - end_fraction) - (start + start_fraction)) / 9;
+            
+            //output += new string(' ', start_full_offset);
+            //invert += new string(color_r, start_full_offset);
+            output += map[start_fraction];
+            invert += color_r;
+
+            if (full_length > 0)
+            {
+                output += new string(map[8], full_length);
+                invert += new string(color_r, full_length);
+            }
+            output += map[8 - end_fraction];
+            invert += color_i;
+            
+            final:
+
+            if (high != -1 && low != -1)
+            {
+                var high_start = high / 9d;
+                var high_end = start / 9d;
+
+                if (high_end - high_start > 1d)
+                {
+                    for (int i = (int) Math.Floor(high_start); i < Math.Floor(high_end); i++)
+                    {
+                        if (output[i] != ' ')
+                        {
+                            Console.WriteLine($"Warn: replacing {output[i]} with high bar");
+                        }
+
+                        output = output.Remove(i, 1);
+
+                        if (i == Math.Floor(high_start) && high % 9 > 4)
+                        {
+                            output = output.Insert(i, "╷");
+                        }
+                        else
+                            output = output.Insert(i, "│");
+
+                        invert = invert.Remove(i, 1);
+                        invert = invert.Insert(i, "n");
+                    }
+                }                
+                
+                var low_start = low / 9d;
+                var low_end = end / 9d;
+
+                if (low_start - low_end > 1d)
+                {
+                    for (int i = (int) Math.Ceiling(low_end); i < Math.Floor(low_start); i++)
+                    {
+                        while (output.Length <= i)
+                        {
+                            output += '█';
+                            invert += '0';
+                        }
+
+                        if (output[i] != ' ')
+                        {
+                            Console.WriteLine($"Warn: replacing {output[i]} with low bar");
+                        }
+
+                        output = output.Remove(i, 1);
+
+                        if (i == Math.Floor(low_start) - 1 && low % 9 < 5)
+                        {
+                            output = output.Insert(i, "╵");
+                        }
+                        else
+                        {
+                            output = output.Insert(i, "│");
+                        }
+
+                        invert = invert.Remove(i, 1);
+                        invert = invert.Insert(i, "n");
+                    }
+                }
+            }
+
+            return (output, invert);
+        }
+
+        public static void PrintCandlesticks(List<(string, string)> strs)
+        {
+            int k = 0;
+
+            var actual_strs = strs.Select(s => s.Item1.EnumerateRunes().ToArray()).ToArray();
+            
+            while (true)
+            {
+                int printed_real = 0;
+
+                for (int i = 0; i < strs.Count; i++)
+                {
+                    if (actual_strs[i].Length <= k)
+                    {
+                        Console.Write(' ');
+                        continue;
+                    }
+
+                    printed_real++;
+
+                    switch (strs[i].Item2[k])
+                    {
+                        case 'r':
+                            Console.ForegroundColor = ConsoleColor.Red;
+                            Console.BackgroundColor = ConsoleColor.Black;
+                            break;
+                        case 'g':
+                            Console.ForegroundColor = ConsoleColor.Green;
+                            Console.BackgroundColor = ConsoleColor.Black;
+                            break;
+                        case 'i':
+                            Console.ForegroundColor = ConsoleColor.Black;
+                            Console.BackgroundColor = ConsoleColor.Red;
+                            break;
+                        case 'j':
+                            Console.ForegroundColor = ConsoleColor.Black;
+                            Console.BackgroundColor = ConsoleColor.Green;
+                            break;
+                        case 'n':
+                            Console.ForegroundColor = ConsoleColor.Gray;
+                            Console.BackgroundColor = ConsoleColor.Black;
+                            break;
+                    }
+
+                    Console.Write(actual_strs[i][k]);
+                    
+                    Console.ForegroundColor = ConsoleColor.Gray;
+                    Console.BackgroundColor = ConsoleColor.Black;
+                }
+
+                Console.WriteLine();
+                k++;
+
+                if (printed_real == 0)
+                    break;
+            }
+        }
+
+        public static string[] IrcPrintCandlesticks(List<(string, string)> strs, double uppermost, double scale_per_line, double seconds_per_column, double current_price)
+        {
+            int k = 0;
+
+            //StringBuilder output = new StringBuilder();
+            List<string> outlines = new List<string>();
+
+            int last_fg = 0;
+            int last_bg = 0;
+
+            int next_fg = 1;
+            int next_bg = 1;
+
+            var total_rows = strs.Max(s => s.Item1.Length);
+
+            int percentage_center = (int)Math.Floor((uppermost - current_price) / (9 * scale_per_line));
+            
+            string GetAxisLabel(int row)
+            {
+                int digits_required = (int)Math.Abs(Math.Log10(uppermost - (scale_per_line * row * 9)) - 5);
+                return Math.Round(uppermost - (scale_per_line * row * 9), digits_required).ToString("#,#,#0.########");
+            }
+
+            string GetPercentageAxisLabel(int row)
+            {
+                double fraction = 0;
+                if (row == percentage_center)
+                    fraction = 1;
+                else
+                    fraction = (uppermost - (scale_per_line * row * 9)) / current_price;
+
+                fraction -= 1d;
+                return (fraction * 100d).ToString("0.00").PadLeft(4, ' ') + '%';
+            }
+
+            var label_len = Enumerable.Range(0, total_rows).Max(i => GetAxisLabel(i).Length);
+
+            int rows_printed = 0;
+            int row_every = 2;
+
+            var percentage_offset = percentage_center % row_every;
+            
+            while (true)
+            {
+                int printed_real = 0;
+                last_fg = 0;
+                last_bg = 0;
+
+                string curr_out = " │";
+
+                if (rows_printed % row_every == 0)
+                {
+                    curr_out = $"{GetAxisLabel(rows_printed).PadRight(label_len, ' ')} ┤";
+                }
+                else
+                {
+                    curr_out = $"{new string(' ', label_len)} │";
+                }
+
+                for (int i = 0; i < strs.Count; i++)
+                {
+                    if (strs[i].Item1.Length <= k)
+                    {
+                        if (next_fg != last_fg || next_bg != last_bg)
+                        {
+                            curr_out += ((char) 3 + $"{next_fg},{next_bg}");
+                            last_fg = next_fg;
+                            last_bg = next_bg;
+                        }
+                        curr_out += ('█');
+                        continue;
+                    }
+
+                    printed_real++;
+
+                    switch (strs[i].Item2[k])
+                    {
+                        case 'r':
+                            next_fg = 4;
+                            next_bg = 1;
+                            break;
+                        case 'g':
+                            next_fg = 3;
+                            next_bg = 1;
+                            break;
+                        case 'i':
+                            next_fg = 1;
+                            next_bg = 4;
+                            break;
+                        case 'j':
+                            next_fg = 1;
+                            next_bg = 3;
+                            break;
+                        case 'n':
+                            next_fg = 0;
+                            next_bg = 1;
+                            break;
+                        case '0':
+                            next_fg = 1;
+                            next_bg = 1;
+                            break;
+                    }
+
+                    if (next_fg != last_fg || next_bg != last_bg)
+                    {
+                        curr_out += ((char) 3 + $"{next_fg},{next_bg}");
+                        last_fg = next_fg;
+                        last_bg = next_bg;
+                    }
+
+                    curr_out += (strs[i].Item1[k]);
+                    
+                    next_fg = 1;
+                    next_bg = 1;
+                }
+                if (printed_real == 0)
+                    break;
+
+                curr_out += (char) 3;
+                if (rows_printed % row_every == percentage_offset)
+                {
+                    curr_out += $"├ {GetPercentageAxisLabel(rows_printed)}";
+                }
+                else
+                {
+                    curr_out += "│ ";
+                }
+
+                outlines.Add(curr_out);
+                k++;
+                rows_printed++;
+
+            }
+
+            var x_axis = $"{new string(' ', label_len)} └";
+
+            var label_every = 10;
+            
+            for (int i = 0; i < strs.Count; i++)
+            {
+                if ((strs.Count - (i + 1)) % label_every != 0)
+                {
+                    x_axis += "─";
+                }
+                else
+                {
+                    x_axis += "┬";
+                }
+            }
+
+            x_axis += "┘";
+            outlines.Add(x_axis);
+            var new_axis = $"{new string(' ', x_axis.Length)} ";
+            var start = label_len + 2;
+            
+            for (int i = 0; i < strs.Count; i++)
+            {
+                if ((strs.Count - (i + 1)) % label_every != 0)
+                {
+                    continue;
+                }
+
+                var str_index = start + i;
+                var amount_back_in_time = TimeSpan.FromSeconds((strs.Count - (i + 1)) * seconds_per_column);
+                //var stringified = Utilities.TimeSpanToPrettyString(amount_back_in_time, true, false);
+                var stringified = OsirisNext.Utilities.DisplaySeconds(((int) amount_back_in_time.TotalSeconds));
+
+                if (string.IsNullOrWhiteSpace(stringified))
+                    stringified = "now";
+                    
+                if (stringified.Contains(' '))
+                {
+                    stringified = stringified.Split(' ')[0];
+                }
+
+                if (stringified.Length == 3)
+                {
+                    new_axis = new_axis.Remove(start + i - 1, 3);
+                    new_axis = new_axis.Insert(start + i - 1, stringified);
+                }
+                else
+                {
+                    new_axis = new_axis.Remove(start + (int)(i - Math.Floor(stringified.Length / 2d)), stringified.Length);
+                    new_axis = new_axis.Insert(start + (int)(i - Math.Floor(stringified.Length / 2d)), stringified);
+
+                    i += (int)Math.Ceiling(stringified.Length / 2d);
+                }
+            }
+
+            outlines.Add(new_axis);
+
+            return outlines.ToArray();
+        }
+
+        public static (List<(string, string)>, double, double) RenderCandlesticks(List<(double, double, double, double)> data)
+        {
+            //var scale = data.Min(d => Math.Min(d.Item1, d.Item2));
+            var min = -1d;
+            var max = -1d;
+
+            for (int i = 0; i < data.Count; i++)
+            {
+                (var entry, var exit, var low, var high) = data[i];
+
+                if (entry == -1 || exit == -1)
+                    continue;
+
+                if (min == -1 || min > Math.Min(low, Math.Min(entry, exit)))
+                    min = Math.Min(low, Math.Min(entry, exit));
+
+                if (max == -1 || max < Math.Max(high, Math.Max(entry, exit)))
+                    max = Math.Max(high, Math.Max(entry, exit));
+            }
+
+            var orig_min = min;
+
+            var nudge = min * 0.005;
+
+            min -= nudge;
+            max += nudge / 3;
+
+            var scale = (max - min) / (15 * 9);
+            var floor = min;
+
+            int Transform(double val)
+            {
+                return (int)(((max - min) - (val - floor)) / scale);
+            }
+
+            List<(string, string)> output = new List<(string, string)>();
+
+            for (int i = 0; i < data.Count; i++)
+            {
+                (var entry, var exit, var low, var high) = data[i];
+
+                if (entry == -1 || exit == -1)
+                {
+                    output.Add(("", ""));
+                    continue;
+                }
+                
+                output.Add(GetBar(Transform(entry), Transform(exit), Transform(high), Transform(low)));
+            }
+
+            return (output, max, scale);
+        }
+
+        public static List<(double, double, double, double)> GrabCandlestickData(Ticker ticker, TimeSpan candle_width, int candle_count, DateTime start)
+        {
+            var data = TickerDataManager.GetRangeForTicker(ticker, start, (start + (candle_count * candle_width)));
+
+            if (TickerDataManager.Buffers.Buffers.ContainsKey(TickerDataManager.GetTickerId(ticker)))
+            {
+                var buf = TickerDataManager.Buffers.Buffers[TickerDataManager.GetTickerId(ticker)];
+                buf.Flush();
+            }
+
+            var bins = new List<List<BufferElement>>();
+            
+            for (int i = 0; i < candle_count; i++)
+                bins.Add(new List<BufferElement>());
+
+            for (int i = 0; i < data.Count; i++)
+            {
+                var point = data[i];
+                var point_time = DateTime.UnixEpoch.AddSeconds(point.Timestamp);
+
+                var bin_index = (int)Math.Floor((point_time - start) / candle_width);
+
+                if (bin_index >= candle_count || bin_index < 0)
+                {
+                    Console.WriteLine($"Point @ {point_time} is out of range (bin index is {bin_index} out of {candle_count} bins)!");
+                    continue;
+                }
+
+                bins[bin_index].Add(point);
+            }
+
+            double last_price = -1;
+            List<(double, double, double, double)> out_pairs = new List<(double, double, double, double)>();
+
+            for (int i = 0; i < bins.Count; i++)
+            {
+                var bin = bins[i];
+
+                if (!bin.Any())
+                {
+                    out_pairs.Add((-1, -1, -1, -1));
+                    continue;
+                }
+
+                var bin_ordered = bin.OrderBy(b => b.Timestamp).ToList();
+
+                if (last_price == -1)
+                    last_price = bin_ordered.First().Data;
+
+                out_pairs.Add((last_price, bin_ordered.Last().Data, bin.Min(b => b.Data), bin.Max(b => b.Data)));
+                last_price = bin_ordered.Last().Data;
+            }
+
+            return out_pairs;
+            //return bins.Select(b => b.OrderBy(q => q.Timestamp)).Select(b => !b.Any() ? (-1, -1) : ((double)b.First().Data, (double)b.Last().Data)).ToList();
         }
 
         public static bool LooksLikeAddress(string addr)
@@ -132,6 +672,10 @@ namespace CryptoData
         public static Ticker TickerFromString(string ticker)
         {
             var exchange = ticker.Substring(ticker.IndexOf('@') + 1);
+            // (exchange)
+            exchange = exchange.ToLowerInvariant();
+            exchange = char.ToUpper(exchange[0]) + exchange.Substring(1);
+            
             var rest = ticker.Substring(0, ticker.Length - (exchange.Length + 1));
 
             var left = rest.Split(':')[0];
@@ -274,6 +818,14 @@ namespace CryptoData
                 if (age > 30)
                     exchange.Reconnect();
 
+                if (ticker_data.DailyVolume == 0)
+                {
+                    return string.Format("{0} {1} = {2:##,#0.########} {3} // (direct pair, ticker data is {4}, {5}s old)", value, first, temp_value, second,
+                        age < 15 ? "3fresh" :
+                        age < 30 ? "8stale" :
+                        "4expired, attempting to reconnect", (int)age);
+                }
+
                 return string.Format("{0} {1} = {2:##,#0.########} {3} // 24h stats: high 03{6:##,#0.########}, low 04{7:##,#0.########}, volume {8:##,#}, change {9} (direct pair, ticker data is {4}, {5}s old)", value, first, temp_value, second, 
                     age < 15 ? "3fresh" :
                     age < 30 ? "8stale" :
@@ -286,6 +838,8 @@ namespace CryptoData
 
             //Dictionary<string, double> ages = new Dictionary<string, double>();
             List<KeyValuePair<Ticker, double>> ages = new List<KeyValuePair<Ticker, double>>();
+            bool[] reverse = new bool[path.Count];
+            int q = 0;
             
             foreach (var pair in path)
             {
@@ -296,6 +850,7 @@ namespace CryptoData
                     var ticker_data = GetCurrentTickerData(exchange, ticker);
                     double price = ticker_data.LastTrade;
                     temp_value *= price;
+                    reverse[q++] = false;
 
                     ages.Add(new KeyValuePair<Ticker, double>(ticker, (DateTime.Now - exchange.TickerAge[ticker]).TotalSeconds));
 
@@ -308,6 +863,7 @@ namespace CryptoData
                     var ticker_data = GetCurrentTickerData(exchange, ticker);
                     double price = ticker_data.LastTrade;
                     temp_value /= price;
+                    reverse[q++] = true;
 
                     ages.Add(new KeyValuePair<Ticker, double>(ticker, (DateTime.Now - exchange.TickerAge[ticker]).TotalSeconds));
 
@@ -353,7 +909,6 @@ namespace CryptoData
             Ticker[] tickers = ages.Select(p => p.Key).ToArray();
             Dictionary<Ticker, double> current_values = new Dictionary<Ticker, double>();
             int[] indices = new int[tickers.Length];
-            bool[] reverse = new bool[tickers.Length];
             int total_length = pairs_with_buffer.Sum(p => p.Value.Count);
 
             for (int j = 0; j < tickers.Length; j++)
@@ -361,7 +916,7 @@ namespace CryptoData
                 var ticker = tickers[j];
 
                 current_values[ticker] = pairs_with_buffer[ticker][0].Data;
-                reverse[j] = !exchange.ActualPairs.Any(p => p.Key == ticker.First && p.Value == ticker.Second);
+                //reverse[j] = !exchange.ActualPairs.Any(p => p.Key == ticker.First && p.Value == ticker.Second);
             }
 
             for(int i = 0; i < total_length; i++)
@@ -449,7 +1004,7 @@ namespace CryptoData
 
             calc_end:
 
-            float change_percentage = (float)(temp_value / first_value) - 1;
+            float change_percentage = (float)(temp_value - first_value) / first_value;
             
             var oldest_pair = ages.Aggregate((l, r) => l.Value < r.Value ? l : r);
 
@@ -501,7 +1056,7 @@ namespace CryptoData
             while (!exchange.TickerData.ContainsKey(pair) && ++waited < 20)
                 Thread.Sleep(100);
 
-            if (waited == 20)
+            if (waited == 20 && (DateTime.Now - exchange.LastMessage).TotalSeconds > 10)
             {
                 exchange.Reconnect();
                 Thread.Sleep(1000);
@@ -519,12 +1074,12 @@ namespace CryptoData
 
         static int GetWeight(string ticker)
         {
-            if (ticker == "USD" || ticker == "EUR" || ticker == "BNB")
-                return 3;
+            if (ticker == "USD" || ticker == "EUR" || ticker == "BNB" || ticker == "BTC" || ticker == "USDT")
+                return 1;
             else if (ticker == "ETH")
                 return 2;
 
-            return 1;
+            return 3;
         }
 
         static List<KeyValuePair<string, string>> FindPath(string start_ticker, string end_ticker, out string graph, out IExchange final_exchange)
@@ -563,7 +1118,7 @@ namespace CryptoData
             if (exchange.PairGraph[start_ticker].Contains(end_ticker))
             {
                 Log.Debug("Direct pair exists: {0}:{1}", start_ticker, end_ticker);
-                return new List<KeyValuePair<string, string>>() { new KeyValuePair<string, string>(start_ticker, end_ticker) };
+                //return new List<KeyValuePair<string, string>>() { new KeyValuePair<string, string>(start_ticker, end_ticker) };
             }
 
             Dictionary<string, int> distance = new Dictionary<string, int>();
@@ -590,9 +1145,17 @@ namespace CryptoData
 
                 foreach (var neighbor in neighbors)
                 {
-                    if (distance[neighbor] > distance[current_node] + GetWeight(current_node))
+                    /*var ticker = exchange.TickerFromSymbol($"{current_node}{neighbor}");
+
+                    if (!exchange.TickerData.ContainsKey(ticker))
+                        ticker = exchange.TickerFromSymbol($"{neighbor}{current_node}");
+                    
+                    var age = !exchange.TickerAge.ContainsKey(ticker) ? 100 : (DateTime.Now - exchange.TickerAge[ticker]).TotalSeconds;
+                    Log.Debug($"{ticker} is {age}s old");*/
+                    
+                    if (distance[neighbor] > (int)(distance[current_node] + GetWeight(current_node)))
                     {
-                        distance[neighbor] = distance[current_node] + GetWeight(current_node);
+                        distance[neighbor] = (int)(distance[current_node] + GetWeight(current_node));
                         previous[neighbor] = current_node;
                     }
                 }

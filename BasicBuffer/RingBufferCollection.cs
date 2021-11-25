@@ -42,27 +42,34 @@ namespace BasicBuffer
             
             for (int j = 0; j < Files.Count; j++)
             {
-                var Stream = Files[j];
-                Stream.Seek(0, SeekOrigin.Begin);
-                var currentCount = Stream.ReadInt();
-                Count += currentCount;
-
-                for (int i = 0; i < currentCount; i++)
+                try
                 {
-                    string name = Stream.ReadString();
-                    RingBuffer buffer = new RingBuffer(Stream, (int) Stream.Position);
-                    buffer.Name = name;
+                    var Stream = Files[j];
+                    Stream.Seek(0, SeekOrigin.Begin);
+                    var currentCount = Stream.ReadInt();
+                    Count += currentCount;
 
-                    Stream.Seek(buffer.StreamOffset + buffer.SizeInBytes, SeekOrigin.Begin);
+                    for (int i = 0; i < currentCount; i++)
+                    {
+                        string name = Stream.ReadString();
+                        RingBuffer buffer = new RingBuffer(Stream, (int) Stream.Position);
+                        buffer.Name = name;
 
-                    Buffers[name] = buffer;
-                    if (!BuffersByFile.ContainsKey(Stream))
-                        BuffersByFile[Stream] = new List<RingBuffer>();
-                    
-                    BuffersByFile[Stream].Add(buffer);
-                    BufferFiles[buffer] = Stream;
-                    
-                    Log.Debug("Loaded buffer \"{0}\" of size {1}", name, buffer.Size);
+                        Stream.Seek(buffer.StreamOffset + buffer.SizeInBytes, SeekOrigin.Begin);
+
+                        Buffers[name] = buffer;
+                        if (!BuffersByFile.ContainsKey(Stream))
+                            BuffersByFile[Stream] = new List<RingBuffer>();
+
+                        BuffersByFile[Stream].Add(buffer);
+                        BufferFiles[buffer] = Stream;
+
+                        Log.Debug("Loaded buffer \"{0}\" of size {1}", name, buffer.Size);
+                    }
+                }
+                catch (Exception e)
+                {
+                    Log.Error(e, $"Exception thrown while opening {Files[j].Name}");
                 }
             }
 
@@ -147,7 +154,7 @@ namespace BasicBuffer
                     {
                         buffer.SaveInternal();
                         saved_total += buffer.FlushInternal();
-                        Log.Debug("Saved buffer \"{0}\"", buffer.Name);
+                        //Log.Debug("Saved buffer \"{0}\"", buffer.Name);
                     }
 
                 }

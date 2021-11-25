@@ -355,7 +355,7 @@ namespace Exchange
                     break;
                 case "ticker":
                     string ticker_name = channel_type.Split('_')[1];
-                    Ticker ticker = TickerFromString(ticker_name);
+                    Ticker ticker = TickerFromSymbol(ticker_name);
 
                     //Log.Info("Ticker update on {0}: ask={1:0.0000000}/{2:0.00}, bid={3:0.0000000}/{4:0.00}, last_price={5:0.0000000}", channel_type.Split('_')[1], update[1][0], GetDepth(10, BookEntryType.Ask), update[1][2], GetDepth(10, BookEntryType.Bid), update[1][6]);
                     Log.Info("Ticker update on {0}: ask={1:0.0000000}, bid={2:0.0000000}, last_price={3:0.0000000}", ticker_name, update[1][0], update[1][2], update[1][6]);
@@ -600,7 +600,7 @@ namespace Exchange
             return str;
         }
 
-        public Ticker TickerFromString(string str)
+        public Ticker TickerFromSymbol(string str)
         {
             if (str.StartsWith("t"))
                 str = str.Substring(1);

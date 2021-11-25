@@ -31,7 +31,7 @@ namespace FarField
 
         public static string GetTitle(string url)
         {
-            int multiplier = 32;
+            int multiplier = 128;
 
             string result = string.Empty;
             HttpWebRequest request;
@@ -64,6 +64,8 @@ namespace FarField
                     }
                 }
             }
+            
+            //File.WriteAllText("./last-preview", sb.ToString());
 
             return "-";
         }

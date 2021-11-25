@@ -1,6 +1,8 @@
 ﻿using NLog;
 using System;
+using System.Buffers;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -38,6 +40,7 @@ namespace BasicBuffer
         }
 
         private Dictionary<int, BufferElement> _buffer;
+        private HashSet<int> _dirty;
 
         private RingBuffer()
         {
@@ -52,15 +55,23 @@ namespace BasicBuffer
 
         public void Load()
         {
-            lock (Stream)
+            try
             {
-                Stream.Seek(StreamOffset, SeekOrigin.Begin);
+                lock (Stream)
+                {
+                    Stream.Seek(StreamOffset, SeekOrigin.Begin);
 
-                Size = Stream.ReadInt();
-                Head = Stream.ReadInt();
+                    Size = Stream.ReadInt();
+                    Head = Stream.ReadInt();
+                }
             }
-
+            catch (Exception e)
+            {
+                Log.Error(e, $"Error while loading buffer {Stream.Name}");
+                throw;
+            }
             _buffer = new Dictionary<int, BufferElement>();
+            _dirty = new HashSet<int>();
         }
 
         public void Save()
@@ -87,6 +98,7 @@ namespace BasicBuffer
             buffer.Stream = stream;
             buffer.Size = size;
             buffer._buffer = new Dictionary<int, BufferElement>();
+            buffer._dirty = new HashSet<int>();
 
             //stream.SetLength(size * BufferElement.ELEMENT_SIZE);
             var empty_element = new BufferElement(0, 0);
@@ -118,7 +130,7 @@ namespace BasicBuffer
             int absolute_index = GetAbsoluteIndex(index);
 
             _buffer[absolute_index] = element;
-            _buffer[absolute_index].Dirty = true;
+            _dirty.Add(absolute_index);
         }
 
         public void Write(BufferElement element)
@@ -159,13 +171,19 @@ namespace BasicBuffer
             //}
             for (int i = 0; i < Size; i++)
             {
-                if (!_buffer.ContainsKey(i) || !_buffer[i].Dirty)
+                if (!_buffer.ContainsKey(i))
                     continue;
 
-                WriteToFile(i);
-                _buffer[i].Dirty = false;
+                if (!_dirty.Contains(i))
+                    continue;
+
+                var elem = _buffer[i];
+                WriteToFile(i, elem);
+                
                 loaded++;
             }
+
+            _dirty.Clear();
 
             if (_buffer.Count > 100)
             {
@@ -183,7 +201,7 @@ namespace BasicBuffer
                 //Log.Info("Cleared cache");
             }
 
-            Log.Info("Wrote {0} entries", loaded);
+            //Log.Info("Wrote {0} entries", loaded);
             return loaded;
         }
 
@@ -200,15 +218,16 @@ namespace BasicBuffer
             return actual_index;
         }
 
-        private void WriteToFile(int real_index)
+        private void WriteToFile(int real_index, BufferElement elem)
         {
             int element_size = BufferElement.ELEMENT_SIZE;
             int file_offset = (element_size * real_index) + HEADER_LENGTH + StreamOffset;
 
-            var element = _buffer[real_index];
+            Span<byte> bytes = stackalloc byte[8];
+            elem.Serialize(bytes);
             
             Stream.Seek(file_offset, SeekOrigin.Begin);
-            Stream.Write(element.Serialize(), 0, element_size);
+            Stream.Write(bytes);
         }
 
         private BufferElement ReadFromFile(int real_index)
@@ -216,26 +235,26 @@ namespace BasicBuffer
             int element_size = BufferElement.ELEMENT_SIZE;
             int file_offset = (element_size * real_index) + HEADER_LENGTH + StreamOffset;
 
-            byte[] buffer = new byte[8];
+            //byte[] buffer = new byte[element_size];
+            Span<byte> buffer = stackalloc byte[element_size];
 
             lock (Stream)
             {
                 Stream.Seek(file_offset, SeekOrigin.Begin);
-                Stream.Read(buffer, 0, element_size);
+                Stream.Read(buffer);
             }
             
-            return BufferElement.Parse(buffer);
+            var elem = BufferElement.Parse(buffer);
+            return elem;
         }
     }
 
-    public class BufferElement
+    public struct BufferElement
     {
         public static readonly int ELEMENT_SIZE = 8;
 
-        public uint Timestamp;
-        public float Data;
-
-        public bool Dirty;
+        public uint Timestamp { get; private set; }
+        public float Data { get; private set; }
 
         public BufferElement(int time, float data) :
             this((uint)time, data)
@@ -247,30 +266,24 @@ namespace BasicBuffer
         {
             Timestamp = time;
             Data = data;
-
-            Dirty = false;
         }
 
-        public static BufferElement Parse(byte[] data)
+        public static BufferElement Parse(ReadOnlySpan<byte> data)
         {
             return new BufferElement(
-                BitConverter.ToUInt32(data, 0), 
-                BitConverter.ToSingle(data, 4));
+                BitConverter.ToUInt32(data), 
+                BitConverter.ToSingle(data.Slice(4)));
         }
 
-        public byte[] Serialize()
+        public void Serialize(Span<byte> ret)
         {
-            byte[] ret = new byte[8];
-
-            Array.Copy(BitConverter.GetBytes(Timestamp), 0, ret, 0, 4);
-            Array.Copy(BitConverter.GetBytes(Data), 0, ret, 4, 4);
-
-            return ret;
+            BitConverter.TryWriteBytes(ret, Timestamp);
+            BitConverter.TryWriteBytes(ret.Slice(4), Data);
         }
 
         public override string ToString()
         {
-            return string.Format("({0}, {1}{2})", Timestamp, Data, Dirty ? ", dirty" : "");
+            return string.Format("({0}, {1}{2})", Timestamp, Data);
         }
     }
 }

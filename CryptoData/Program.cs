@@ -2,8 +2,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection.Metadata.Ecma335;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
+using Exchange;
 using HeimdallBase;
 using OsirisBase;
 using UserLedger;
@@ -21,6 +24,43 @@ namespace CryptoData
 
         public void Start(string[] args)
         {
+            var strs = new List<(string, string)>();
+            for (int i = 0; i < 9; i++)
+            {
+                for (int j = 20; j <= 40; j++)
+                {
+                    strs.Add(CryptoHandler.GetBar(j - 15, j - 5, 2 * j, 0));
+                }
+                for (int j = 40; j > 20; j--)
+                {
+                    strs.Add(CryptoHandler.GetBar(j - 5, j - 15, 2 * j, 0));
+                }
+
+                break;
+            }
+
+            CryptoHandler.PrintCandlesticks(strs);
+            
+            strs.Clear();
+            
+            for (int i = 0; i < 9; i++)
+            {
+                for (int j = 20; j <= 40; j++)
+                {
+                    strs.Add(CryptoHandler.GetBar(j - 10, j - 7, j, 0));
+                }
+                for (int j = 40; j > 20; j--)
+                {
+                    strs.Add(CryptoHandler.GetBar(j - 9, j - 10, j, 0));
+                }
+
+                break;
+            }
+
+            CryptoHandler.PrintCandlesticks(strs);
+
+            //return;
+
             Name = "crypto";
             //SmartAlertManager.Load();
 
@@ -30,14 +70,148 @@ namespace CryptoData
                 {".exc", GetExchange },
                 {".statage ", GetOldestStat},
                 {".stat ", GetNearestStat },
+                {".graph ", PrintGraphToConsole},
                 {"$flush", (a, s, n) => { SendMessage(string.Format("Saved {0} entries.", TickerDataManager.Save()), s); SendMessage(string.Format("Total cache entries: {0}", TickerDataManager.Buffers.Buffers.Sum(b => b.Value.Cached)), s); GC.Collect(); } }
             };
 
             Init(args, delegate
             {
-                CryptoHandler.Init();
-                TickerDataManager.Init();
+                CryptoHandler.Init(!args.Contains("--create-buffers"));
+                TickerDataManager.Init(args.Contains("--create-buffers"));
+
+                while (true)
+                {
+                    Thread.Sleep(15000);
+
+                    foreach (var exc in CryptoHandler.Exchanges)
+                    {
+                        if ((DateTime.Now - exc.Value.LastMessage).TotalSeconds > 25)
+                        {
+                            try
+                            {
+                                Log.Debug($"Reconnecting to {exc.Key}...");
+                                exc.Value.Reconnect();
+                            }
+                            catch
+                            {
+                            }
+                        }
+                    }
+                }
             });
+        }
+
+        void PrintGraphToConsole(string args, string source, string n)
+        {
+            try
+            {
+                args = args.Substring(".graph".Length).Trim();
+
+                if (string.IsNullOrWhiteSpace(args) || args == "help")
+                {
+                    SendMessage("Syntax: .graph <currency>[:<other currency>] [candle width]", source);
+                    SendMessage("By default, other currency is USDT and candle width is 2m.", source);
+                    return;
+                }
+
+                var parts = args.Split(' ');
+
+                Ticker ticker;
+                parts[0] = parts[0].ToUpper();
+
+                if (parts[0].Contains(':'))
+                {
+                    if (parts[0].Contains('@'))
+                        ticker = CryptoHandler.TickerFromString(parts[0]);
+                    else
+                        ticker = CryptoHandler.TickerFromString(parts[0] + "@Binance");
+                }
+                else
+                {
+                    ticker = CryptoHandler.TickerFromString(parts[0] + ":USDT@Binance");
+                }
+
+                //if (!CryptoHandler.Exchanges[].Contains(ticker.ToString()))
+                if (!CryptoHandler.Exchanges[ticker.Exchange].TickerData.ContainsKey(ticker))
+                {
+                    ticker = new Ticker(ticker.Second, ticker.First, ticker.Exchange);
+                    
+                    
+                    if (!CryptoHandler.Exchanges[ticker.Exchange].TickerData.ContainsKey(ticker))
+                        ticker = new Ticker(ticker.First, ticker.Second, "Kucoin");
+                    if (!CryptoHandler.Exchanges[ticker.Exchange].TickerData.ContainsKey(ticker))
+                        ticker = new Ticker(ticker.Second, ticker.First, "Kucoin");
+                }
+
+                if (!CryptoHandler.Exchanges[ticker.Exchange].TickerData.ContainsKey(ticker))
+                {
+                    SendMessage($"I couldn't find the ticker you asked for.", source);
+                    return;
+                }
+
+                int candle_w_sec = 120;
+                int candle_count = 70;
+
+                if (parts.Length > 1)
+                {
+                    if (char.IsDigit(parts[1][0]))
+                    {
+                        var len = int.Parse(new string(parts[1].TakeWhile(char.IsDigit).ToArray()));
+
+                        if (parts[1].EndsWith("m"))
+                        {
+                            candle_w_sec = len * 60;
+                        }
+                        else if (parts[1].EndsWith("s"))
+                        {
+                            candle_w_sec = len;
+                        }
+                        else if (parts[1].EndsWith("h"))
+                        {
+                            candle_w_sec = len * 3600;
+                        }
+                    }
+                }
+
+                if (candle_count * candle_w_sec > 10000)
+                {
+                    SendMessage("Note: you are viewing a bit too far into the past. Consider using narrower candles.",
+                        source);
+                }
+
+                if (ticker == null)
+                {
+                    SendMessage("Couldn't find that ticker.", source);
+                    return;
+                }
+
+                //var ticker = CryptoHandler.TickerFromString(args.Split(' ')[0].Trim());
+
+
+                var start = DateTime.UtcNow.Subtract(TimeSpan.FromSeconds(candle_w_sec * candle_count));
+                start = start.AddSeconds(-start.Second);
+
+                (var candlesticks, var top, var scale) = CryptoHandler.RenderCandlesticks(
+                    CryptoHandler.GrabCandlestickData(ticker,
+                        TimeSpan.FromSeconds(candle_w_sec), candle_count, start));
+
+                var latest = CryptoHandler.GetCurrentTickerData(CryptoHandler.Exchanges[ticker.Exchange], ticker);
+
+                CryptoHandler.PrintCandlesticks(candlesticks);
+                var lines = CryptoHandler.IrcPrintCandlesticks(candlesticks, top, scale, candle_w_sec, latest.LastTrade);
+
+                foreach (var line in lines)
+                {
+                    SendMessage(line, source);
+                    Thread.Sleep(15);
+                }
+                
+                GetExchange($".exc 1 {ticker.First} to {ticker.Second}", source, n);
+            }
+            catch (Exception ex)
+            {
+                SendMessage($"Something went wrong: {ex.Message}", source);
+            }
         }
 
         void GetNearestStat(string args, string source, string n)
@@ -59,7 +233,8 @@ namespace CryptoData
             var data = TickerDataManager.GetOldestTickerData(ticker, out int rawtime, out int index);
             Log.Info("Found data for {0}", ticker);
 
-            SendMessage(string.Format("Oldest ticker data for {0}: {1:##,#0.########}, {2} old, {3}, {4}, index {5}", ticker, data.LastTrade, Utilities.TimeSpanToPrettyString(DateTime.Now - data.Timestamp), data.Timestamp, rawtime, index), source);
+            SendMessage(
+                $"Oldest ticker data for {ticker}: {data.LastTrade:##,#0.########}, {Utilities.TimeSpanToPrettyString(DateTime.Now - data.Timestamp)} old, {data.Timestamp}, {rawtime}, index {index}", source);
         }
 
         void Wildcard(string args, string source, string n)

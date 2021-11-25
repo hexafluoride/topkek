@@ -66,17 +66,17 @@ namespace Exchange.WebSockets
             Dictionary<string, string> headers =
                 lines.Select(l =>
                     new KeyValuePair<string, string>(
-                        l.Split(':')[0],
+                        l.Split(':')[0].ToLower(),
                         string.Join(":", l.Split(':').Skip(1)).Trim()
                     )).GroupBy(x => x.Key, (x, ys) => ys.First()).ToDictionary(x => x.Key, x => x.Value);
 
-            if (!headers.ContainsKey("Sec-WebSocket-Accept"))
+            if (!headers.ContainsKey("sec-websocket-accept"))
             {
                 Log.Error("Request lacks WebSocket hash!");
                 return;
             }
 
-            string hash = headers["Sec-WebSocket-Accept"];
+            string hash = headers["sec-websocket-accept"];
 
             Log.Debug("WebSocket hash is {0}", hash);
 

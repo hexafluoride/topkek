@@ -36,6 +36,8 @@ namespace Exchange
         public Dictionary<Ticker, DateTime> TickerAge { get; set; }
         private ClientConnection client;
 
+        private bool _reconnecting = false;
+
         public BinanceInstance()
         {
             PairGraph = new Dictionary<string, HashSet<string>>();
@@ -47,54 +49,68 @@ namespace Exchange
 
         public void Connect()
         {
-            TickerData = new Dictionary<Ticker, TickerData>();
-            TickerAge = new Dictionary<Ticker, DateTime>();
-
-            Uri endpoint_uri = new Uri(Endpoint);
-
-            bool tls = endpoint_uri.Scheme == "wss";
-            int port = endpoint_uri.Port;
-
-            if (port == -1)
-                port = tls ? 443 : 80;
-
-            TcpClient tcp = new TcpClient(endpoint_uri.Host, port);
-            client = new ClientConnection(tcp, tls, endpoint_uri.Host);
-
-            Log.Info("Connecting to {0}:{1}...", endpoint_uri.Host, ((IPEndPoint)tcp.Client.RemoteEndPoint).Port);
-
-            client.OnDataReceived += (sender, msg, payload) =>
+            lock (Currencies)
             {
-                LastMessage = DateTime.Now;
-
-                string payload_str = Encoding.UTF8.GetString(payload);
-
                 try
                 {
-                    var obj = JToken.Parse(payload_str);
+                    TickerData = new Dictionary<Ticker, TickerData>();
+                    TickerAge = new Dictionary<Ticker, DateTime>();
 
-                    if (obj.Type == JTokenType.Array) // ticker data
+                    Uri endpoint_uri = new Uri(Endpoint);
+
+                    bool tls = endpoint_uri.Scheme == "wss";
+                    int port = endpoint_uri.Port;
+
+                    if (port == -1)
+                        port = tls ? 443 : 80;
+
+                    TcpClient tcp = new TcpClient(endpoint_uri.Host, port);
+                    client = new ClientConnection(tcp, tls, endpoint_uri.Host);
+
+                    Log.Info("Connecting to {0}:{1}...", endpoint_uri.Host,
+                        ((IPEndPoint) tcp.Client.RemoteEndPoint).Port);
+
+                    client.OnDataReceived += (sender, msg, payload) =>
                     {
-                        var arr = (JArray)obj; ParseTickers(arr);
-                    }
-                    else
-                    {
-                        Log.Warn("Unrecognized JToken type {0}", obj.Type);
-                    }
+                        LastMessage = DateTime.Now;
+
+                        string payload_str = Encoding.UTF8.GetString(payload);
+
+                        try
+                        {
+                            var obj = JToken.Parse(payload_str);
+
+                            if (obj.Type == JTokenType.Array) // ticker data
+                            {
+                                var arr = (JArray) obj;
+                                ParseTickers(arr);
+                            }
+                            else
+                            {
+                                Log.Warn("Unrecognized JToken type {0}", obj.Type);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Warn(ex);
+                        }
+                    };
+
+                    client.PerformHandshake(endpoint_uri.Host, endpoint_uri.PathAndQuery, "");
+                    client.StartThreads();
+
+                    LastMessage = DateTime.Now;
+
+                    Log.Info("Connected");
+                    OnConnect?.Invoke(this);
                 }
                 catch (Exception ex)
                 {
-                    Log.Warn(ex);
+                    Log.Error(ex, "while reconnecting");
                 }
-            };
-
-            client.PerformHandshake(endpoint_uri.Host, endpoint_uri.PathAndQuery, "");
-            client.StartThreads();
-
-            LastMessage = DateTime.Now;
-
-            Log.Info("Connected");
-            OnConnect?.Invoke(this);
+                finally {
+                    _reconnecting = false;}
+            }
         }
 
         public void ParseTickers(JArray tickers)
@@ -104,7 +120,26 @@ namespace Exchange
                 try
                 {
                     string symbol = raw_ticker.Value<string>("s");
-                    var ticker = TickerFromString(symbol);
+
+                    if (symbol == null)
+                    {
+                        Log.Info($"No symbol provided, ticker: {raw_ticker.ToString()}");
+                        continue;
+                    }
+                    
+                    var ticker = TickerFromSymbol(symbol);
+
+                    if (ticker == null)
+                    {
+                        Log.Info($"Symbol {symbol} did not resolve to a ticker");
+                        continue;
+                    }
+
+                    if (symbol.Contains("USDP"))
+                    {
+                        //Log.Debug($"{symbol} {ticker}");
+                    }
+                    
                     ticker.Exchange = ExchangeName;
 
                     TickerData data = new TickerData();
@@ -123,19 +158,26 @@ namespace Exchange
 
                     OnTickerUpdateReceived?.Invoke(this, data);
                 }
-                catch
+                catch (Exception ex)
                 {
-
+                    Log.Error(ex);
                 }
             }
         }
 
 		public void Reconnect()
         {
+            lock (Currencies)
+            {
+                if (_reconnecting)
+                    return;
+                _reconnecting = true;
+            }
+            
             Log.Info("Reconnecting...");
             new Thread(new ThreadStart(delegate
             {
-                client.Close();
+                try {client.Close();} catch{}
                 Thread.Sleep(500);
                 Connect();
             })).Start();
@@ -186,8 +228,26 @@ namespace Exchange
             }
         }
 
-        public Ticker TickerFromString(string str)
+        private Dictionary<string, Ticker> TickerCache = new();
+
+        public Ticker TickerFromSymbol(string str)
         {
+            if (TickerCache.ContainsKey(str))
+                return TickerCache[str];
+            
+            var possible_first_matches = Currencies.Where(c => str.StartsWith(c));
+
+            foreach (var match in possible_first_matches)
+            {
+                var cropped = str.Substring(match.Length);
+                var second_matches = Currencies.Where(c => cropped.StartsWith(c));
+
+                if (second_matches.Any())
+                    return TickerCache[str] = new Ticker(match, second_matches.FirstOrDefault()) {Exchange = ExchangeName};
+            }
+
+            return null;
+
             var first_match = Currencies.FirstOrDefault(c => str.StartsWith(c));
 
             if (first_match == default)

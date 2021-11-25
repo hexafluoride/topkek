@@ -55,7 +55,7 @@ namespace Backyard
                 {"s/", TrySubstitute},
                 {"", ChannelMessage},
                 {".ram", ShowRam},
-                {".quote ", BetterQuote},
+                {".quote", BetterQuote},
             };
             
             Init(args, BackyardMain);
@@ -108,7 +108,22 @@ namespace Backyard
                 return;
 
             var query = args.Substring(".quote".Length).Trim().ToLowerInvariant();
-            var result = Quotes.GetNextQuote(query, trimmedSource);
+            Quote result = null;
+
+            if (int.TryParse(query, out int quoteId) && quoteId > 0 && quoteId <= Quotes.HighestId)
+            {
+                result = Quotes.Quotes.FirstOrDefault(q => q.Source == trimmedSource && q.Id == quoteId);
+
+                if (result == null)
+                {
+                    SendMessage($"Couldn't find quote #{quoteId}.", source);
+                    return;
+                }
+            }
+            else
+            {
+                result = Quotes.GetNextQuote(query, trimmedSource);   
+            }
 
             if (result != null)
             {

@@ -8,6 +8,7 @@ namespace Backyard
 {
     public class QuoteUtil
     {
+        public int HighestId { get; set; }
         public List<Quote> Quotes { get; set; } = new();
         private Dictionary<(string, string), Query> Queries = new();
 
@@ -49,6 +50,9 @@ namespace Backyard
                         Time = DateTime.UnixEpoch.AddSeconds(time),
                         Filename = filename
                     };
+
+                    if (id > HighestId)
+                        HighestId = id;
                     
                     Quotes.Add(quote);
                 }

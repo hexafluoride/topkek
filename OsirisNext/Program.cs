@@ -262,8 +262,14 @@ namespace OsirisNext
             string message = ms.ReadString();
 
             ms.Close();
-
-            IrcManager.SendMessage(message, target);
+            
+            if (message.Contains('\0'))
+                foreach (var sub in message.Split('\0'))
+                    IrcManager.SendMessage(sub, target);
+            else
+            {
+                IrcManager.SendMessage(message, target);   
+            }
         }
         void SendNotice(Connection conn, Message msg)
         {
