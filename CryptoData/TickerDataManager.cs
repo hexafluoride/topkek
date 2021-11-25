@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using HeimdallBase;
 using NLog;
 
 namespace CryptoData
@@ -17,7 +18,7 @@ namespace CryptoData
         public static List<IExchange> Exchanges { get; set; } = new();
         public static RingBufferCollection Buffers { get; set; }
 
-        public static readonly int SIZE = 86400 * 7;
+        public static int SIZE = 86400 * 7;
 
         public static bool Loaded = false;
 
@@ -27,9 +28,14 @@ namespace CryptoData
 
         public static void Init(bool create_bufs = false)
         {
+            if (Config.GetInt("crypto.tickers.default_size") > 0)
+            {
+                SIZE = Config.GetInt("crypto.tickers.default_size");
+            }
+        
             if (!Directory.Exists("./tickers") || Directory.GetFiles("./tickers", "*.buf").Length == 0 || create_bufs)
             {
-                Log.Info("Creating buffer from scratch... DO NOT INTERRUPT");
+                Log.Info($"Creating buffers of size {SIZE} from scratch... DO NOT INTERRUPT");
 
                 //Stream = new FileStream(Filename, FileMode.OpenOrCreate);
                 Directory.CreateDirectory("./tickers/");
