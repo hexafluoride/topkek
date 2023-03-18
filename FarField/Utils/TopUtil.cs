@@ -70,7 +70,7 @@ namespace FarField
                         return;
                     }
 
-                    var try_until = DateTime.Now.AddSeconds(120);
+                    var try_until = DateTime.Now.AddSeconds(320);
                     var image_data = new byte[0];
                     
                     while (DateTime.Now < try_until)
@@ -228,13 +228,15 @@ namespace FarField
 
                 fileContent.Headers.Add("Content-Type", "application/octet-stream");
                 fileContent.Headers.Add("Content-Disposition",
-                    $"form-data; name=\"file\"; filename=\"{filename}\"");
-                content.Add(fileContent, "file", filename);
+                    $"form-data; name=\"Image\"; filename=\"{filename}\"");
+                content.Add(fileContent, "Image", filename);
 
-                var response = uploadClient.PostAsync("https://uguu.se/api.php?d=upload-tool", content).Result;
+                var response = uploadClient.PostAsync("https://wiki.wetfish.net/upload.php", content).Result;
                 var respStr = response.Content.ReadAsStringAsync().Result;
-                return respStr;
-            }
+                                    var urlFragment = respStr.Substring(respStr.IndexOf("upload/"));
+				                            urlFragment = urlFragment.Substring(0, urlFragment.IndexOf('\''));
+							                            return $"https://wiki.wetfish.net/{urlFragment}";
+	    }
         }
     }
 }

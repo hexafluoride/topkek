@@ -22,10 +22,11 @@ namespace Backyard
                 {
                     var possibleNick = args.Substring(0, args.IndexOf(highlightChar));
                     if (HasUser(source, possibleNick))
+                    {
                         targetNick = possibleNick;
-
-                    args = args.Substring(possibleNick.Length + 1).Trim();
-                    break;
+                        args = args.Substring(possibleNick.Length + 1).Trim();
+                        break;
+                    }
                 }
             }
 
@@ -33,6 +34,12 @@ namespace Backyard
                 return;
 
             var separator = args[1];
+
+            if (separator != '/')
+            {
+                return;
+            }
+            
             var parts = args.Split(separator);
 
             if (parts.Length < 3)

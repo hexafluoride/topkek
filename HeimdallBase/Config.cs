@@ -47,7 +47,7 @@ namespace HeimdallBase
 
         public static T GetValue<T>(string key)
         {
-            if (KeyStore == null || !KeyStore.ContainsKey(key))
+            if (key is null || KeyStore == null || !KeyStore.ContainsKey(key))
                 return default(T);
 
             return (T)Convert.ChangeType(KeyStore[key], typeof(T));

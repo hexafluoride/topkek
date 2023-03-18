@@ -35,10 +35,29 @@ namespace HeimdallBase
                 }
             }
 
+            // if (Config.GetString("host") != default)
+            // {
+            //     host = Config.GetString("host");
+            // }
+            //
+            // if (Config.GetInt("port") != 0)
+            // {
+            //     port = Config.GetInt("port");
+            // }
+
             ConnectionInit(host, port);
 
             if (act != null)
                 act();
+
+            while (true)
+            {
+                var messageLocal = new Message();
+                if (!Connection.PumpNextMessage(ref messageLocal))
+                {
+                    ConnectionInit(host, port);
+                }
+            }
 
             while (true)
             {
@@ -69,6 +88,7 @@ namespace HeimdallBase
 
             reply.MessageType = "uptime";
             reply.Data = BitConverter.GetBytes((int)(DateTime.Now - Start).TotalSeconds);
+            reply.DataLength = reply.Data.Length;
 
             Connection.SendMessage(reply);
         }

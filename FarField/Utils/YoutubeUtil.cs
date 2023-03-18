@@ -45,6 +45,14 @@ namespace FarField
 
         public string GetVideoID(string url)
         {
+		if (url.Contains("shorts")) {
+			var parts = url.Split(new [] { '/', '?' }, StringSplitOptions.RemoveEmptyEntries);
+
+			if (parts.Length < 4) { return "-"; }
+
+			return parts[3];
+		}
+
             if (url.Contains("youtu.be") && !url.Contains("feature"))
             {
                 string[] parts = url.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
@@ -147,7 +155,7 @@ namespace FarField
                             name = item.Snippet.Title;
                             uploader = item.Snippet.ChannelTitle;
                             likes = ((ulong)item.Statistics.LikeCount).ToString("N0");
-                            dislikes = ((ulong)item.Statistics.DislikeCount).ToString("N0");
+                            //dislikes = ((ulong)item.Statistics.DislikeCount).ToString("N0");
                             views = ((ulong)item.Statistics.ViewCount).ToString("N0");
                             uploaded = ((DateTime)item.Snippet.PublishedAt).ToShortDateString();
                             if (item.Snippet.LiveBroadcastContent != "none")
@@ -172,11 +180,11 @@ namespace FarField
 
                 if (live)
                     return new ResolverResponse(string.Format(
-                    "You4Tube livestream: \"{0}\" | Started by 11{1} {2} ago | {3} watching | 3{4} likes/4{5} dislikes",
+                    "You4Tube livestream: \"{0}\" | Started by 11{1} {2} ago | {3} watching | 3{4} likes",
                     name, uploader, uploaded, views, likes, dislikes), false);
 
                 return new ResolverResponse(string.Format(
-                    "You4Tube video: \"{0}\" | Uploaded by 11{1} on {2} | {3} long | {4} views | 3{5} likes/4{6} dislikes",
+                    "You4Tube video: \"{0}\" | Uploaded by 11{1} on {2} | {3} long | {4} views | 3{5} likes",
                     name, uploader, uploaded, duration, views, likes, dislikes));
             }
             catch

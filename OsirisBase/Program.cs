@@ -39,15 +39,14 @@ namespace OsirisBase
 
         public void SendNotice(string message, string token, string nick)
         {
-            MemoryStream ms = new MemoryStream();
+            using (MemoryStream ms = new MemoryStream())
+            {
+                ms.WriteString(nick);
+                ms.WriteString(token);
+                ms.WriteString(message);
 
-            ms.WriteString(nick);
-            ms.WriteString(token);
-            ms.WriteString(message);
-
-            Connection.SendMessage(ms.ToArray(), "irc_notice", "irc");
-
-            ms.Close();
+                Connection.SendMessage(ms.ToArray(), "irc_notice", "irc");
+            }
         }
 
         public void SetUpMatchers()
@@ -62,55 +61,76 @@ namespace OsirisBase
             }   
         }
 
+        private IFormatter formatter = new BinaryFormatter();
+        
         public void AddMatcher(MessageMatcher matcher)
         {
             matcher.Node = Name;
-            
-            IFormatter bf = new BinaryFormatter();
-            MemoryStream ms = new MemoryStream();
-            bf.Serialize(ms, matcher);
 
-            Connection.SendMessage(ms.ToArray(), "add_matcher", "irc");
-            ms.Close();
+            using (MemoryStream ms = new MemoryStream())
+            {
+                formatter.Serialize(ms, matcher);
+                Connection.SendMessage(ms.ToArray(), "add_matcher", "irc");
+            }
         }
 
         public void CallMatcher(Connection conn, Message msg)
         {
-            MemoryStream ms = new MemoryStream(msg.Data);
+            var data = msg.DataSliced;
+            data = data.ReadString(out string id);
 
-            string id = ms.ReadString();
-            string message = ms.ReadString().Trim();
-            string source = ms.ReadString();
-            string nick = ms.ReadString();
-
-            if (Commands.Any(t => t.Key == id))
+            if (Commands.ContainsKey(id))
             {
-                Commands.First(t => t.Key == id).Value(message, source, nick);
+                data = data.ReadString(out string message);
+                data = data.ReadString(out string source);
+                data = data.ReadString(out string nick);
+                message = message.Trim();
+                Commands[id](message, source, nick);
             }
+        }
 
-            ms.Close();
+        public List<(char, string)> GetUsers(string source)
+        {
+            using (MemoryStream ms = new MemoryStream())
+            {
+                ms.WriteString(source);
+                var resp = Connection.WaitFor(ms.ToArray(), "get_users", "irc", "users");
+
+                ReadOnlySpan<byte> respSliced = resp.AsSpan();
+                var list = new List<(char, string)>();
+
+                while (respSliced.Length > 0)
+                {
+                    respSliced = respSliced.ReadString(out string nextNick);
+                    list.Add((nextNick[0], nextNick.Substring(1)));
+                }
+
+                return list;
+            }
         }
 
         public bool HasUser(string source, string nick)
         {
-            MemoryStream ms = new MemoryStream();
+            using (MemoryStream ms = new MemoryStream())
+            {
+                ms.WriteString(source);
+                ms.WriteString(nick);
 
-            ms.WriteString(source);
-            ms.WriteString(nick);
-
-            return Connection.WaitFor(ms.ToArray(), "has_user", "irc", "has_user_resp")[0] == '+';
+                return Connection.WaitFor(ms.ToArray(), "has_user", "irc", "has_user_resp")[0] == '+';
+            }
         }
 
         public void SendMessage(string message, string target)
         {
-            MemoryStream ms = new MemoryStream();
+            using (MemoryStream ms = new MemoryStream())
+            {
+                ms.WriteString(target);
+                ms.WriteString(message);
 
-            ms.WriteString(target);
-            ms.WriteString(message);
+                Connection.SendMessage(ms.ToArray(), "irc_send", "irc");
 
-            Connection.SendMessage(ms.ToArray(), "irc_send", "irc");
-
-            ms.Close();
+                ms.Close();
+            }
         }
     }
 }

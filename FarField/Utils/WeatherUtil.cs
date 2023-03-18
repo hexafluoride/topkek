@@ -28,40 +28,84 @@ namespace FarField
                     }
 
                     var raw = Client.DownloadString(string.Format(
-                        "https://api.darksky.net/forecast/{0}/{1},{2}?units={3}", Config.GetString("weather.key"), lat,
+                        "https://dev.pirateweather.net/forecast/{0}/{1},{2}?units={3}", Config.GetString("weather.key"), lat,
                         lng, unit_code));
                     var resp = JObject.Parse(raw);
 
                     //Console.WriteLine(raw);
 
-                    string format = "{0}, current temperature: {1}, feels like {2}. {3}";
 
                     var currently = (JObject) resp["currently"];
                     var minutely = resp["minutely"];
                     var hourly = resp["hourly"];
                     var daily = resp["daily"];
+                    
+                    var iconMap = new Dictionary<string, string>()
+                    {
+                        {"rain", "🌧️"},
+                        {"clear-day", "☀️"},
+                        {"clear-night", "🌙"},
+                        {"cloudy", "☁️"},
+                        {"partly-cloudy-day", "⛅"},
+                        {"snow", "🌧️"},
+                        {"sleet", "🌨️️"},
+                        {"wind", "💨"},
+                        {"fog", "🌁"},
+                        {"partly-cloudy-night", "️☁"},
+                    };
+                    var emoji = "";
+
+                    if (currently.ContainsKey("icon"))
+                    {
+                        var iconName = currently.Value<string>("icon");
+                        if (iconMap.ContainsKey(iconName))
+                            emoji = iconMap[iconName] + "  ";
+                    }
+                    
+                    string format = $"{emoji}{{0}}, current temperature: \x02{{1}}\x02, feels like \x02{{2}}\x02";
 
                     List<string> summaries = new List<string>();
 
-                    if (currently.ContainsKey("humidity") && currently.ContainsKey("dewPoint"))
-                        summaries.Add(string.Format("Humidity: {0}%, dew point: {1}.",
-                            currently.Value<double>("humidity") * 100d,
-                            FormatTemperature(currently.Value<double>("dewPoint"), preferMetric)));
+                    if (currently.ContainsKey("humidity"))
+                        summaries.Add(string.Format("Humidity: \x02{0}%\x02",
+                            (int)(currently.Value<double>("humidity") * 100d)));
 
-                    if (minutely != null)
-                        summaries.Add(minutely.Value<string>("summary"));
+                    if (currently.ContainsKey("windBearing") && currently.ContainsKey("windSpeed"))
+                    {
+                        var windSpeed = currently.Value<double>("windSpeed");
+                        var windBearing = currently.Value<double>("windBearing");
 
-                    if (hourly != null)
-                        summaries.Add(hourly.Value<string>("summary"));
+                        var windDirectionString = windBearing switch
+                        {
+                            >= 315 or <= 45 => "N",
+                            < 315 and >= 225 => "W",
+                            < 225 and >= 135 => "S",
+                            < 135 and > 45 => "E",
+                            _ => "?"
+                        };
 
-                    if (daily != null)
-                        summaries.Add(daily.Value<string>("summary"));
+                        if (preferMetric)
+                            windSpeed *= 1.609;
+                        
+                        summaries.Add($"Wind: \x02{windSpeed:0.00} {(preferMetric ? "kph" : "mph")}\x02 {windDirectionString}");
+                    }
+
+                    // if (minutely != null)
+                    //     summaries.Add(minutely.Value<string>("summary"));
+                    //
+                    // if (hourly != null)
+                    //     summaries.Add(hourly.Value<string>("summary"));
+                    //
+                    // if (daily != null)
+                    //     summaries.Add(daily.Value<string>("summary"));
 
                     var ret = string.Format(format,
                         currently.Value<string>("summary"),
                         FormatTemperature(currently.Value<double>("temperature"), preferMetric),
-                        FormatTemperature(currently.Value<double>("apparentTemperature"), preferMetric),
-                        string.Join(" ", summaries));
+                        FormatTemperature(currently.Value<double>("apparentTemperature"), preferMetric));
+                    
+                    summaries.Insert(0, ret);
+                    ret = string.Join(" \x000314-\x03 ", summaries);
 
                     LinkResolver.Cache.Add(cache_id, ret, TimeSpan.FromMinutes(10));
                     return ret;

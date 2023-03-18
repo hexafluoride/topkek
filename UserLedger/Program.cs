@@ -50,7 +50,7 @@ namespace UserLedger
 
         void GetUserData(Connection c, Message m)
         {
-            using (var ms = new MemoryStream(m.Data))
+            using (var ms = new MemoryStream(m.DataSliced.ToArray()))
             {
                 var source = ms.ReadString();
                 var nick = ms.ReadString();
@@ -69,7 +69,7 @@ namespace UserLedger
 
         void SetUserData(Connection c, Message m)
         {
-            using (var ms = new MemoryStream(m.Data))
+            using (var ms = new MemoryStream(m.DataSliced.ToArray()))
             {
                 var source = ms.ReadString();
                 var nick = ms.ReadString();

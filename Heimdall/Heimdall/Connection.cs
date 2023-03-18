@@ -48,8 +48,8 @@ namespace Heimdall
 
             LoopRunning = new ManualResetEvent(false);
 
-            Loop = new Thread(ReceiveLoop);
-            Loop.Start();
+            // Loop = new Thread(ReceiveLoop);
+            // Loop.Start();
 
             Start();
         }
@@ -72,119 +72,130 @@ namespace Heimdall
             LoopRunning.Reset();
         }
 
-        private void ReceiveLoop()
+        void Fail()
         {
-            while(true)
+            Stop();
+
+            if (Handlers.Any(t => t.Key == "bye"))
             {
-                while (LoopRunning.WaitOne(1000))
+                Handlers.First(t => t.Key == "bye").Value(this, null);
+            }
+        }
+
+        // public List<Message> PumpBox = new();
+        
+        public bool PumpNextMessage(ref Message msg)
+        {
+            if(!Client.Connected)
+            {
+                Console.WriteLine("Client not connected");
+                Fail();
+                return false;
+            }
+
+            if (!Message.TryConsume(BinaryReader, msg))
+            {
+                Console.WriteLine("Message could not be consumed");
+                Fail();
+                return false;
+            }
+
+            //Console.WriteLine("Received {0} from {1}, data: {2}", msg.MessageType, msg.Source, Encoding.Unicode.GetString(msg.Data));
+
+            if(!msg.Valid)
+            {
+                Violations++;
+
+                if(Violations > 100)
                 {
-                    if(!Client.Connected)
-                    {
-                        Stop();
+                    Console.WriteLine("Too many violations");
+                    Fail();
+                    return false;
+                }
 
-                        if (Handlers.Any(t => t.Key == "bye"))
-                        {
-                            Handlers.First(t => t.Key == "bye").Value(this, null);
-                        }
+                Console.WriteLine("Message not valid");
+                return false;
+            }
 
-                        return;
-                    }
+            if(Violations > 0)
+                Violations--;
+            
+            DispatchMessage(msg);
+            return true;
+        }
 
-                    Message msg = Message.Consume(NetworkStream);
-
-                    //Console.WriteLine("Received {0} from {1}, data: {2}", msg.MessageType, msg.Source, Encoding.Unicode.GetString(msg.Data));
-
-                    if(!msg.Valid)
-                    {
-                        Violations++;
-
-                        if(Violations > 100)
-                        {
-                            Stop();
-
-                            if (Handlers.Any(t => t.Key == "bye"))
-                            {
-                                Handlers.First(t => t.Key == "bye").Value(this, null);
-                            }
-
-                            return;
-                        }
-
-                        continue;
-                    }
-
-                    if(Violations > 0)
-                        Violations--;
-
-                    //Console.WriteLine("Received message {0}", msg.MessageType);
-
-                    if (MessageReceived != null)
-                        MessageReceived(this, msg);
+        public void DispatchMessage(Message msg)
+        {
+            if (MessageReceived != null)
+            {
+                try
+                {
+                    MessageReceived(this, msg);
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine(e);
                 }
             }
         }
 
+        // private void ReceiveLoop()
+        // {
+        //     Message msg = new Message();
+        //     
+        //     while(true)
+        //     {
+        //         while (LoopRunning.WaitOne(1000))
+        //         {
+        //             PumpNextMessage(ref msg);
+        //         }
+        //     }
+        // }
+
         public byte[] WaitFor(string message, string type, string destination, string response_type)
         {
-            byte[] ret = new byte[0];
-
-            ManualResetEvent finished = new ManualResetEvent(false);
-
-            OnMessageReceived rec = (c, msg) =>
-            {
-                if (msg.Source != destination)
-                    return;
-
-                ret = msg.Data;
-                finished.Set();
-            };
-
-            AddHandler(response_type, rec);
-
             SendMessage(message, type, destination);
 
-            finished.WaitOne();
-
-            RemoveHandler(response_type);
-
-            return ret;
+            var tempMessage = new Message();
+            var backedUp = new List<Message>();
+            while (true)
+            {
+                PumpNextMessage(ref tempMessage);
+                if (tempMessage.MessageType == response_type)
+                {
+                    return tempMessage.DataSliced.ToArray();
+                }
+            }
         }
 
         public byte[] WaitFor(byte[] message, string type, string destination, string response_type)
         {
-            byte[] ret = new byte[0];
-
-            ManualResetEvent finished = new ManualResetEvent(false);
-
-            OnMessageReceived rec = (c, msg) =>
-            {
-                if (msg.Source != destination)
-                    return;
-
-                ret = msg.Data;
-                finished.Set();
-            };
-
-            AddHandler(response_type, rec);
-
             SendMessage(message, type, destination);
 
-            finished.WaitOne();
-
-            RemoveHandler(response_type);
-
-            return ret;
+            var tempMessage = new Message();
+            while (true)
+            {
+                PumpNextMessage(ref tempMessage);
+                if (tempMessage.MessageType == response_type)
+                {
+                    return tempMessage.DataSliced.ToArray();
+                }
+            }
         }
 
         private void HandleMessage(Connection conn, Message msg)
         {
             if (msg.Destination != Name)
-                return; 
+                return;
 
-            lock (Handlers)
+            for (int i = 0; i < Handlers.Count; i++)
             {
-                if (Handlers.Any(p => p.Key == msg.MessageType))
-                    Handlers.Where(p => p.Key == msg.MessageType).ToList().ForEach(p => Task.Factory.StartNew(delegate { p.Value(this, msg); }));
+                lock (Handlers)
+                {
+                    (var targetType, var handler) = Handlers[i];
+                    if (msg.MessageType == targetType)
+                        handler(conn, msg);
+                }
             }
         }
 
@@ -207,14 +218,12 @@ namespace Heimdall
         public void SendMessage(Message message)
         {
             try
-            {
-//                var data = message.Serialize();
-  //              BinaryWriter.Write(data);
-  message.SerializeTo(NetworkStream);
+            { 
+                message.SerializeTo(NetworkStream);
+                NetworkStream.Flush();
             }
             catch (Exception ex)
             {
-
                 Console.WriteLine(ex);
             }
             //Console.WriteLine("Sent message {0}", message.MessageType);
@@ -222,17 +231,28 @@ namespace Heimdall
 
         public void SendMessage(byte[] data, string type, string dest)
         {
-            Message msg = new Message(data);
-            msg.MessageType = type;
-            msg.Destination = dest;
-            msg.Source = Name;
-
-            SendMessage(msg);
+            try
+            {
+                Message.SerializeTo(NetworkStream, Name, dest, type, data);
+                NetworkStream.Flush();
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+            }
         }
 
         public void SendMessage(string data, string type, string dest)
         {
-            SendMessage(Encoding.Unicode.GetBytes(data), type, dest);
+            try
+            {
+                Message.SerializeTo(NetworkStream, Name, dest, type, data);
+                NetworkStream.Flush();
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+            }
         }
     }
 }

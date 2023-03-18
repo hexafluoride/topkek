@@ -49,7 +49,7 @@ namespace Heimdall
 
         public void HandleHandshake(Connection conn, Message msg)
         {
-            ClientName = Encoding.Unicode.GetString(msg.Data);
+            ClientName = Encoding.Unicode.GetString(msg.DataSliced);
         }
     }
 }

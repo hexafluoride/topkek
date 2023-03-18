@@ -78,7 +78,7 @@ namespace OsirisNext
             }));
             Client.SetHandler("PONG", new IrcClient.MessageHandler((c, msg) =>
             {
-                Console.WriteLine("Received PONG from {0}", c.ServerAddress);
+                // Console.WriteLine("Received PONG from {0}", c.ServerAddress);
                 c.LastPong = DateTime.Now;
             }));
             Client.ConnectionComplete += (s, e) =>

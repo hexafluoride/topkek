@@ -40,6 +40,7 @@ namespace Exchange
         private ClientConnection client;
 
         private bool _reconnecting = false;
+        private HttpClient _localClient = new();
 
         public KucoinInstance()
         {
@@ -52,6 +53,7 @@ namespace Exchange
 
         public void Connect()
         {
+            return;
             //PopulatePairGraph();
             lock (Currencies)
             {
@@ -139,30 +141,30 @@ namespace Exchange
 
                     int start = 10050;
 
-                    foreach (var market in Markets)
-                    {
-                        var subscribe = new
-                        {
-                            id = start++,
-                            type = "subscribe",
-                            topic = $"/market/snapshot:{market}",
-                            privateChannel = false,
-                            response = false
-                        };
-                        
-                        //client.SendText(JsonConvert.SerializeObject(subscribe));
-                        Log.Info($"Subscribed to market {market}");
-                    }
+                    // foreach (var market in Markets)
+                    // {
+                    //     var subscribe = new
+                    //     {
+                    //         id = start++,
+                    //         type = "subscribe",
+                    //         topic = $"/market/snapshot:{market}",
+                    //         privateChannel = false,
+                    //         response = false
+                    //     };
+                    //     
+                    //     //client.SendText(JsonConvert.SerializeObject(subscribe));
+                    //     Log.Info($"Subscribed to market {market}");
+                    // }
                     
-                    var subscribe_tick = new
-                    {
-                        id = start++,
-                        type = "subscribe",
-                        topic = $"/market/ticker:all",
-                        privateChannel = false,
-                        response = false
-                    };
-                    client.SendText(JsonConvert.SerializeObject(subscribe_tick));
+                    // var subscribe_tick = new
+                    // {
+                    //     id = start++,
+                    //     type = "subscribe",
+                    //     topic = $"/market/ticker:all",
+                    //     privateChannel = false,
+                    //     response = false
+                    // };
+                    // client.SendText(JsonConvert.SerializeObject(subscribe_tick));
 
                     Log.Info("Connected");
                     OnConnect?.Invoke(this);
@@ -293,6 +295,8 @@ namespace Exchange
 
 		public void Reconnect()
         {
+            return;
+            
             lock (Currencies)
             {
                 if (_reconnecting)
@@ -314,6 +318,39 @@ namespace Exchange
 
         }
 
+        public TickerData? GetCurrentTickerData(Ticker ticker)
+        {
+            var stringified = $"{ticker.First.ToUpperInvariant()}-{ticker.Second.ToUpperInvariant()}";
+            
+            if (!canonicalTickers.Contains(stringified))
+                stringified = $"{ticker.Second.ToUpperInvariant()}-{ticker.First.ToUpperInvariant()}";
+
+            if (!canonicalTickers.Contains(stringified))
+            {
+                Console.WriteLine($"No canonical ticker found for {stringified}");
+                return null;
+            }
+            
+            var resp = _localClient.GetStringAsync($"https://api.kucoin.com/api/v1/market/stats?symbol={stringified}").Result;
+            var respParsed = JObject.Parse(resp)["data"];
+
+            var data = new TickerData()
+            {
+                DailyChangePercentage = double.Parse(respParsed.Value<string>("changeRate")),
+                DailyHigh = double.Parse(respParsed.Value<string>("high")),
+                DailyLow = double.Parse(respParsed.Value<string>("low")),
+                DailyVolume = double.Parse(respParsed.Value<string>("vol")),
+                LastTrade = double.Parse(respParsed.Value<string>("last")),
+                Timestamp = DateTime.UnixEpoch.AddMilliseconds(double.Parse(respParsed.Value<string>("time"))),
+                Ticker = ticker,
+                Retrieved = DateTime.UtcNow
+            };
+            return data;
+        }
+
+        public List<Ticker> Tickers { get; set; } = new();
+
+        private HashSet<string> canonicalTickers = new();
         private List<string> Markets = new List<string>();
 
         public void PopulatePairGraph()
@@ -328,7 +365,7 @@ namespace Exchange
             foreach (var symbol in json["data"])
             {
                 symbols.Add($"{symbol.Value<string>("baseCurrency")}:{symbol.Value<string>("quoteCurrency")}");
-                
+
                 if (!Markets.Contains(symbol.Value<string>("market")))
                     Markets.Add(symbol.Value<string>("market"));
             }
@@ -338,12 +375,15 @@ namespace Exchange
 
         public void PopulatePairGraph(List<string> pairs)
         {
+            canonicalTickers = pairs.Select(t => t.Replace(':', '-')).ToHashSet();
             var pairs_parsed = pairs.Select(p => new KeyValuePair<string, string>(p.Split(':')[0], p.Split(':')[1]));
 
             ActualPairs = pairs_parsed.ToList();
 
             pairs_parsed = pairs_parsed.Concat(pairs_parsed.Select(p => new KeyValuePair<string, string>(p.Value, p.Key)));
 
+            Tickers.Clear();
+            
             foreach (var pair in pairs_parsed)
             {
                 string right = pair.Value;
@@ -359,6 +399,8 @@ namespace Exchange
 
                 Currencies.Add(pair.Key);
                 Currencies.Add(right);
+                
+                Tickers.Add(new Ticker(pair.Key, right, this));
             }
         }
 

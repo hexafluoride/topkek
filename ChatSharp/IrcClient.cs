@@ -187,7 +187,7 @@ namespace ChatSharp
 
                     delay = Delay ? delay : 0;
 
-                    Console.WriteLine("Sleeping {0} ms for {1}...", delay, msg);
+                    // Console.WriteLine("Sleeping {0} ms for {1}...", delay, msg);
                     Thread.Sleep(delay);
                     MessageHistory.Add(DateTime.Now);
 
@@ -336,7 +336,7 @@ namespace ChatSharp
                 //    {
                 lock (NetworkStream)
                 {
-                    Console.WriteLine("Enqueued {0}", message);
+                    // Console.WriteLine("Enqueued {0}", message);
                     WriteQueue.Enqueue(message);
                 }
                 //    }

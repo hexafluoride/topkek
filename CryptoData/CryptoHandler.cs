@@ -37,12 +37,12 @@ namespace CryptoData
 
         public static void Init(bool actually_connect = true)
         {
-            Exchanges["Binance"] = new BinanceInstance();
+            // Exchanges["Binance"] = new BinanceInstance();
             Exchanges["Kucoin"] = new KucoinInstance();
             
             //PopulatePairGraph();
             //Bitfinex.PopulatePairGraph("./bitfinex-pairs.txt");
-            (Exchanges["Binance"] as BinanceInstance).PopulatePairGraph();
+            // (Exchanges["Binance"] as BinanceInstance).PopulatePairGraph();
             (Exchanges["Kucoin"] as KucoinInstance).PopulatePairGraph();
 
                 foreach (var exchange in Exchanges.Values)
@@ -57,13 +57,16 @@ namespace CryptoData
             /*Task.Run((Action)Bitfinex.Connect);
             Task.Run((Action)Binance.Connect);*/
 
-            PeckingOrder = new List<IExchange>() { /*Bitfinex,*/ Exchanges["Binance"], Exchanges["Kucoin"] };
+            PeckingOrder = new List<IExchange>() { /*Bitfinex,*/ /*Exchanges["Binance"], */Exchanges["Kucoin"] };
             //Tickers = new HashSet<string>(Exchanges["Binance"].Currencies);
             Tickers = Exchanges.Values.SelectMany(e => e.Currencies).ToHashSet();
         }
+        
+        
 
-        public static (string, string) GetBar(int start, int end, int high = -1, int low = -1)
+        public static (string, string) GetBar(int start, int end, int high = -1, int low = -1, bool doRsi = false, (double, double, double, double) actualCandle = default)
         {
+            (var entry, var exit, _, _) = actualCandle;
             var map = new char[] { ' ', '▁', '▂','▃','▄','▅','▆','▇','█' };
             //var cope_map = new string[] { "🭶","🭷","🭸","🭹","🭺","🭻" };
             var cope_map = new char[] { '⎺','⎻','⎼','⎽' };
@@ -87,6 +90,15 @@ namespace CryptoData
 
             var color_r = color_inv ? 'g' : 'r';
             var color_i = color_inv ? 'j' : 'i';
+
+            var color_orig_r = color_r;
+            var color_orig_i = color_i;
+            
+            if (doRsi)
+            {
+                color_r = 'S';
+                color_i = 'B';
+            }
 
             var length = end - start;
 
@@ -292,7 +304,7 @@ namespace CryptoData
             }
         }
 
-        public static string[] IrcPrintCandlesticks(List<(string, string)> strs, double uppermost, double scale_per_line, double seconds_per_column, double current_price)
+        public static string[] IrcPrintCandlesticks(List<(string, string)> strs, double uppermost, double scale_per_line, double seconds_per_column, double current_price, bool printPercentageAxis = true)
         {
             int k = 0;
 
@@ -351,6 +363,8 @@ namespace CryptoData
                     curr_out = $"{new string(' ', label_len)} │";
                 }
 
+                double lineLevel = double.Parse(GetAxisLabel(rows_printed));
+
                 for (int i = 0; i < strs.Count; i++)
                 {
                     if (strs[i].Item1.Length <= k)
@@ -367,7 +381,21 @@ namespace CryptoData
 
                     printed_real++;
 
-                    switch (strs[i].Item2[k])
+                    var colorChar = strs[i].Item2[k];
+
+                    if (colorChar == 'S' || colorChar == 'B')
+                    {
+                        if (lineLevel > 70)
+                        {
+                            colorChar = colorChar == 'S' ? 'g' : 'j';
+                        }
+                        else if (lineLevel < 30)
+                        {
+                            colorChar = colorChar == 'S' ? 'r' : 'i';
+                        }
+                    }
+
+                    switch (colorChar)
                     {
                         case 'r':
                             next_fg = 4;
@@ -393,6 +421,14 @@ namespace CryptoData
                             next_fg = 1;
                             next_bg = 1;
                             break;
+                        case 'S':
+                            next_fg = 13;
+                            next_bg = 1;
+                            break;
+                        case 'B':
+                            next_fg = 1;
+                            next_bg = 13;
+                            break;
                     }
 
                     if (next_fg != last_fg || next_bg != last_bg)
@@ -411,13 +447,17 @@ namespace CryptoData
                     break;
 
                 curr_out += (char) 3;
-                if (rows_printed % row_every == percentage_offset)
+
+                if (printPercentageAxis)
                 {
-                    curr_out += $"├ {GetPercentageAxisLabel(rows_printed)}";
-                }
-                else
-                {
-                    curr_out += "│ ";
+                    if (rows_printed % row_every == percentage_offset)
+                    {
+                        curr_out += $"├ {GetPercentageAxisLabel(rows_printed)}";
+                    }
+                    else
+                    {
+                        curr_out += "│ ";
+                    }
                 }
 
                 outlines.Add(curr_out);
@@ -486,7 +526,70 @@ namespace CryptoData
             return outlines.ToArray();
         }
 
-        public static (List<(string, string)>, double, double) RenderCandlesticks(List<(double, double, double, double)> data)
+        public static (List<double>, double, double) TransformRSI(List<(double, double, double, double)> data, int period)
+        {
+            double u = 0;
+            double d = 0;
+            double max = -1;
+            double min = -1;
+            double scale = 0;
+
+            var pointsOut = new List<double>();
+            double lastClose = data[0].Item2;
+            
+            for (int i = 0; i < data.Count; i++)
+            {
+                (var entry, var exit, var low, var high) = data[i];
+
+                var localU = Math.Max(0, exit - lastClose);
+                var localD = Math.Max(0, lastClose - exit);
+
+                u = ((u * (period - 1)) + localU) / period;
+                d = ((d * (period - 1)) + localD) / period;
+
+                lastClose = exit;
+
+                if (i >= (period * 2))
+                {
+                    if (d == 0)
+                    {
+                        d = double.Epsilon;
+                    }
+                    var relativeStrength = u / d;
+                    var rsi = 100 - (100 / (1 + relativeStrength));
+                    
+                    pointsOut.Add(rsi);
+
+                    if (max == -1 || rsi > max)
+                        max = rsi;
+
+                    if (min == -1 || rsi < min)
+                        min = rsi;
+                }
+            }
+
+            scale = max - min;
+
+            return (pointsOut, max, scale);
+        }
+
+        public static (List<(string, string)>, double, double) RenderRSI(List<double> rsiPoints, double max, double scale)
+        {
+            var candlesticks = new List<(double, double, double, double)>();
+
+            var lastRsi = rsiPoints[0];
+            for (int i = 1; i < rsiPoints.Count; i++)
+            {
+                var rsi = rsiPoints[i];
+                
+                candlesticks.Add((lastRsi, rsi, Math.Min(lastRsi, rsi), Math.Max(lastRsi, rsi)));
+                lastRsi = rsi;
+            }
+
+            return RenderCandlesticks(candlesticks, doRsi: true);
+        }
+
+        public static (List<(string, string)>, double, double) RenderCandlesticks(List<(double, double, double, double)> data, bool doRsi = false)
         {
             //var scale = data.Min(d => Math.Min(d.Item1, d.Item2));
             var min = -1d;
@@ -533,10 +636,241 @@ namespace CryptoData
                     continue;
                 }
                 
-                output.Add(GetBar(Transform(entry), Transform(exit), Transform(high), Transform(low)));
+                output.Add(GetBar(Transform(entry), Transform(exit), Transform(high), Transform(low), doRsi));
             }
 
             return (output, max, scale);
+        }
+        
+        public static Dictionary<int, string> YahooCandlestickIntervals = new()
+        {
+            {60, "1m"},
+            {120, "2m"},
+            {300, "5m"},
+            {900, "15m"},
+            {1800, "30m"},
+            {3600, "1h"},
+            {14400, "4h"},
+            {86400, "1d"},
+            {604800, "1w"},
+            {2592000, "1M"},
+            {2592000 * 3, "3M"},
+            //{86400 * 365, "1y"},
+
+            /*1m
+                3m
+                5m
+                15m
+                30m
+                1h
+            2h
+            4h
+            6h
+            8h
+            12h
+            1d
+            3d
+            1w
+            1M*/
+
+
+        };
+
+        private static Dictionary<string, double> appropriateInterval = new()
+        {
+            {"1d", 86400},
+            {"5d", 5 * 86400},
+            {"1mo", 30 * 86400},
+            {"3mo", 90 * 86400},
+            {"6mo", 180 * 86400},
+            {"1y", 365 * 86400},
+            {"2y", 730 * 86400},
+            {"5y", 5 * 365 * 86400},
+            {"10y", 10 * 365 * 86400},
+            {"max", double.MaxValue}
+        };
+
+        public class YahooTickerInfo
+        {
+            public string Symbol { get; set; }
+            public string LongName { get; set; }
+            public string ShortName { get; set; }
+            public string QuoteCurrency { get; set; }
+        }
+
+        public static Dictionary<string, YahooTickerInfo> YahooTickers = new();
+
+        public static (TickerData, List<(double, double, double, double)>) GrabCandlestickDataFromYahoo(string ticker,
+            string interval, DateTime start, int candle_count)
+        {
+            var originalInterval = interval;
+            
+            interval = interval.Replace("M", "mo");
+            interval = interval.Replace("w", "wk");
+
+            var startThing = (int)(start - DateTime.UnixEpoch).TotalSeconds;
+            var endThing = (int)(DateTime.UtcNow - DateTime.UnixEpoch).TotalSeconds;
+
+            Console.WriteLine(originalInterval);
+            Console.WriteLine(YahooCandlestickIntervals.FirstOrDefault(y => y.Value == originalInterval).Key);
+            Console.WriteLine(appropriateInterval.Values.OrderBy(v => v).FirstOrDefault(f => f > (endThing - startThing)));
+
+            var rightRange = appropriateInterval.Values.OrderBy(v => v)
+                .FirstOrDefault(f => f > (endThing - startThing));
+            //var rightRange = appropriateInterval.Values.OrderBy(v => v).FirstOrDefault(f => f > YahooCandlestickIntervals.FirstOrDefault(y => y.Value == originalInterval).Key);
+
+            Console.WriteLine(rightRange);
+            
+            if (rightRange == 0)
+                return (new TickerData(), new List<(double, double, double, double)>());
+
+            var range = appropriateInterval.First(f => f.Value == rightRange).Key;
+            // range = range.Replace("M", "mo");
+            // range = range.Replace("w", "wk");
+            
+            var url =
+                $"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?symbol={ticker}&range={range}&useYfid=true&interval={interval}&includePrePost=true&events=div|split|earn&lang=en-US&region=US&corsDomain=finance.yahoo.com";
+
+            Console.WriteLine(url);
+            
+            var response = Client.DownloadString(url);
+            var responseParsed = JObject.Parse(response);
+            var relevant = responseParsed["chart"]["result"][0];
+            var indicators = relevant["indicators"]["quote"][0];
+
+            var sequenceLength = (indicators["close"] as JArray).Count;
+
+            var oclh = new List<(double, double, double, double)>();
+
+            double lastPrice = -1;
+
+            for (int i = 0; i < sequenceLength; i++)
+            {
+                if (indicators["open"][i].Type == JTokenType.Null ||
+                    indicators["close"][i].Type == JTokenType.Null ||
+                    indicators["high"][i].Type == JTokenType.Null ||
+                    indicators["low"][i].Type == JTokenType.Null
+                    ) 
+                {
+                    if (lastPrice == -1)
+                        continue;
+                    
+                    oclh.Add((lastPrice, lastPrice, lastPrice, lastPrice));
+                    continue;
+                }
+
+                lastPrice = indicators["close"][i].Value<double>();
+                
+                oclh.Add((
+                    indicators["open"][i].Value<double>(),
+                    indicators["close"][i].Value<double>(),
+                    indicators["low"][i].Value<double>(),
+                    indicators["high"][i].Value<double>()
+                    ));
+            }
+
+            if (!YahooTickers.ContainsKey(ticker.ToUpperInvariant()))
+            {
+                var tickerInfo = new YahooTickerInfo();
+                var tickerUrl = $"https://query1.finance.yahoo.com/v7/finance/quote?symbols={ticker}";
+                var tickerParsed = JObject.Parse(Client.DownloadString(tickerUrl))["quoteResponse"]["result"][0] as JObject;
+                tickerInfo.Symbol = tickerParsed["symbol"].Value<string>();
+                tickerInfo.ShortName = tickerParsed["shortName"].Value<string>();
+                if (tickerParsed.ContainsKey("longName"))
+                    tickerInfo.LongName = tickerParsed["longName"].Value<string>();
+                else
+                    tickerInfo.LongName = tickerInfo.ShortName;
+
+                if (tickerParsed.ContainsKey("currency"))
+                    tickerInfo.QuoteCurrency = tickerParsed["currency"].Value<string>();
+                else
+                    tickerInfo.QuoteCurrency = "USD";
+
+                YahooTickers[ticker.ToUpperInvariant()] = tickerInfo;
+                YahooTickers[tickerInfo.Symbol] = tickerInfo;
+            }
+
+            var tickerData = new TickerData()
+            {
+                LastTrade = relevant["meta"]["regularMarketPrice"].Value<double>(),
+                Ticker = new Ticker(ticker.ToUpperInvariant(), YahooTickers[ticker.ToUpperInvariant()].QuoteCurrency)
+            };
+
+            if ((relevant["meta"] as JObject).ContainsKey("chartPreviousClose"))
+                tickerData.DailyChangePercentage =
+                    (tickerData.LastTrade / relevant["meta"]["chartPreviousClose"].Value<double>()) - 1;
+            
+            return (tickerData, oclh);
+        }
+
+        public static Dictionary<int, string> BinanceCandlestickIntervals = new()
+        {
+            {1, "1s"},
+            {60, "1m"},
+            {180, "3m"},
+            {300, "5m"},
+            {900, "15m"},
+            {1800, "30m"},
+            {3600, "1h"},
+            {7200, "2h"},
+            {14400, "4h"},
+            {21600, "6h"},
+            {28800, "8h"},
+            {43200, "12h"},
+            {86400, "1d"},
+            {259200, "3d"},
+            {604800, "1w"},
+            {2592000, "1M"},
+
+            /*1m
+                3m
+                5m
+                15m
+                30m
+                1h
+            2h
+            4h
+            6h
+            8h
+            12h
+            1d
+            3d
+            1w
+            1M*/
+
+
+        };
+
+        public static List<(double, double, double, double)> GrabCandlestickDataFromBinance(Ticker ticker,
+            TimeSpan candle_width, int candle_count, DateTime start)
+        {
+            if (!BinanceCandlestickIntervals.ContainsKey((int) candle_width.TotalSeconds))
+                throw new Exception($"No defined interval found matching {candle_width.TotalSeconds} seconds");
+
+            var interval = BinanceCandlestickIntervals[(int) candle_width.TotalSeconds];
+            var startTime = (start - DateTime.UnixEpoch).Milliseconds;
+
+            var response =
+                Client.DownloadString(
+                    $"https://api.binance.com:36969/api/v3/klines?symbol={ticker.First}{ticker.Second}&interval={interval}&limit={candle_count}");//&startTime={startTime}");
+
+            var parsed = JArray.Parse(response);
+
+            List<(double, double, double, double)> out_pairs = new List<(double, double, double, double)>();
+            foreach (var point in parsed)
+            {
+                var pointParsed = point as JArray;
+                
+                // open, close, low, high
+                out_pairs.Add((
+                    double.Parse(pointParsed[1].Value<string>()),
+                    double.Parse(pointParsed[4].Value<string>()),
+                    double.Parse(pointParsed[3].Value<string>()),
+                    double.Parse(pointParsed[2].Value<string>())
+                    ));
+            }
+
+            return out_pairs;
         }
 
         public static List<(double, double, double, double)> GrabCandlestickData(Ticker ticker, TimeSpan candle_width, int candle_count, DateTime start)
@@ -770,6 +1104,70 @@ namespace CryptoData
             return string.Format("Last block has height {0}, hash {1}, mined {2} ago", last_block_height, last_block_hash, Utilities.TimeSpanToPrettyString(DateTime.UtcNow - last_block_time));
         }
 
+        public static double ConvertPrice(string first, string second, double value)
+        {
+            first = first.ToUpper();
+            second = second.ToUpper();
+
+            //var path = FindPath(first, second, out string graph, out IExchange exchange);
+            var pair = new KeyValuePair<string, string>();
+            IExchange exchange = null;
+            
+            foreach (var e in PeckingOrder)
+            {
+                if (e.PairGraph[first].Contains(second))
+                {
+                    //Log.Debug("Direct pair exists: {0}:{1}", start_ticker, end_ticker);
+                    //return new List<KeyValuePair<string, string>>() { new KeyValuePair<string, string>(start_ticker, end_ticker) };
+                    exchange = e;
+                    pair = new KeyValuePair<string, string>(first, second);
+                    break;
+                }
+            }
+
+            if (exchange == null)
+                return -1;
+
+            // if (path == null)
+            //     return -1;
+
+            double temp_value = value;
+
+            //var pair = path[0];
+            double age = 0;
+            TickerData ticker_data = null;
+
+            if (exchange.ActualPairs.Any(p => p.Key == pair.Key && p.Value == pair.Value))
+            {
+                var ticker = new Ticker(pair.Key, pair.Value);
+
+                ticker_data = GetCurrentTickerData(exchange, ticker);
+                double price = ticker_data.LastTrade;
+                temp_value *= price;
+
+                age = (DateTime.UtcNow - ticker_data.Timestamp).TotalSeconds;
+
+                Log.Debug("Price of t{0}{1} is {2}", pair.Key, pair.Value, price);
+            }
+            else if (exchange.ActualPairs.Any(p => p.Key == pair.Value && p.Value == pair.Key))
+            {
+                var ticker = new Ticker(pair.Value, pair.Key);
+
+                ticker_data = GetCurrentTickerData(exchange, ticker);
+                double price = ticker_data.LastTrade;
+                temp_value /= price;
+
+                age = (DateTime.UtcNow - ticker_data.Timestamp).TotalSeconds;
+
+                Log.Debug("Price of t{0}{1} is {2}", pair.Value, pair.Key, price);
+            }
+
+            if (age > 30)
+                exchange.Reconnect();
+
+            return temp_value;
+        }
+
         public static string Convert(string first, string second, double value)
         {
             Stopwatch sw = Stopwatch.StartNew();
@@ -798,7 +1196,7 @@ namespace CryptoData
                     double price = ticker_data.LastTrade;
                     temp_value *= price;
 
-                    age = (DateTime.Now - exchange.TickerAge[ticker]).TotalSeconds;
+                    age = (DateTime.UtcNow - ticker_data.Timestamp).TotalSeconds;
 
                     Log.Debug("Price of t{0}{1} is {2}", pair.Key, pair.Value, price);
                 }
@@ -810,7 +1208,7 @@ namespace CryptoData
                     double price = ticker_data.LastTrade;
                     temp_value /= price;
 
-                    age = (DateTime.Now - exchange.TickerAge[ticker]).TotalSeconds;
+                    age = (DateTime.UtcNow - ticker_data.Timestamp).TotalSeconds;
 
                     Log.Debug("Price of t{0}{1} is {2}", pair.Value, pair.Key, price);
                 }
@@ -852,7 +1250,7 @@ namespace CryptoData
                     temp_value *= price;
                     reverse[q++] = false;
 
-                    ages.Add(new KeyValuePair<Ticker, double>(ticker, (DateTime.Now - exchange.TickerAge[ticker]).TotalSeconds));
+                    ages.Add(new KeyValuePair<Ticker, double>(ticker, (DateTime.UtcNow - ticker_data.Timestamp).TotalSeconds));
 
                     Log.Debug("Price of t{0}{1} is {2}", pair.Key, pair.Value, price);
                 }
@@ -865,7 +1263,7 @@ namespace CryptoData
                     temp_value /= price;
                     reverse[q++] = true;
 
-                    ages.Add(new KeyValuePair<Ticker, double>(ticker, (DateTime.Now - exchange.TickerAge[ticker]).TotalSeconds));
+                    ages.Add(new KeyValuePair<Ticker, double>(ticker, (DateTime.UtcNow - ticker_data.Timestamp).TotalSeconds));
 
                     Log.Debug("Price of t{0}{1} is {2}", pair.Value, pair.Key, price);
                 }
@@ -1040,6 +1438,8 @@ namespace CryptoData
 
         public static TickerData GetCurrentTickerData(IExchange exchange, Ticker pair)
         {
+            return exchange.GetCurrentTickerData(pair);
+            
             if ((DateTime.Now - exchange.LastMessage).TotalSeconds > 10)
             {
                 exchange.Reconnect();
@@ -1071,6 +1471,44 @@ namespace CryptoData
 
             return exchange.TickerData[pair];
         }
+        
+        public static TickerData GetCurrentTickerData2(IExchange exchange, Ticker pair)
+        {
+            return exchange.GetCurrentTickerData(pair);
+
+            if ((DateTime.Now - exchange.LastMessage).TotalSeconds > 10)
+            {
+                exchange.Reconnect();
+                Thread.Sleep(1000);
+            }
+
+            if (exchange.TickerData.ContainsKey(pair))
+                return exchange.TickerData[pair];
+            
+            return null;
+
+            // exchange.SubscribeToTicker(pair);
+            //
+            // int waited = 0;
+            //
+            // while (!exchange.TickerData.ContainsKey(pair) && ++waited < 20)
+            //     Thread.Sleep(100);
+            //
+            // if (waited == 20 && (DateTime.Now - exchange.LastMessage).TotalSeconds > 10)
+            // {
+            //     exchange.Reconnect();
+            //     Thread.Sleep(1000);
+            //     exchange.SubscribeToTicker(pair);
+            // }
+            //
+            // while (!exchange.TickerData.ContainsKey(pair) && ++waited < 100)
+            //     Thread.Sleep(100);
+            //
+            // if(waited == 100)
+            //     throw new Exception(string.Format("Couldn't get price for pair {0}, retry in a couple of seconds", pair));
+            //
+            // return exchange.TickerData[pair];
+        }
 
         static int GetWeight(string ticker)
         {
@@ -1087,6 +1525,7 @@ namespace CryptoData
             foreach (var exchange in PeckingOrder)
             {
                 Log.Debug("Trying {0}", exchange.ExchangeName);
+                
                 var path = FindPath(exchange, start_ticker, end_ticker, out graph);
 
                 if (path != null)

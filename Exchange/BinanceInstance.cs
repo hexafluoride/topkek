@@ -51,6 +51,8 @@ namespace Exchange
         {
             lock (Currencies)
             {
+                return;
+                
                 try
                 {
                     TickerData = new Dictionary<Ticker, TickerData>();
@@ -188,6 +190,13 @@ namespace Exchange
 
         }
 
+        public TickerData? GetCurrentTickerData(Ticker ticker)
+        {
+            return TickerData.ContainsKey(ticker) ? TickerData[ticker] : null;
+        }
+
+        public List<Ticker> Tickers { get; set; } = new();
+
         public void PopulatePairGraph()
         {
             var raw_info = new WebClient().DownloadString("https://api.binance.com/api/v3/exchangeInfo");
@@ -196,7 +205,10 @@ namespace Exchange
 
             foreach (var symbol in json["symbols"])
             {
-                symbols.Add($"{symbol.Value<string>("baseAsset")}:{symbol.Value<string>("quoteAsset")}");
+                var baseAsset = symbol.Value<string>("baseAsset");
+                var quoteAsset = symbol.Value<string>("quoteAsset");
+                symbols.Add($"{baseAsset}:{quoteAsset}");
+                Tickers.Add(new Ticker(baseAsset, quoteAsset, this));
             }
 
             PopulatePairGraph(symbols);

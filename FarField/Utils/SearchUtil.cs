@@ -66,7 +66,7 @@ namespace FarField
 
         static List<string> _SearchImagesGoogle(string text, bool random, bool gif)
         {
-            Client.Headers["User-Agent"] = Config.GetString("search.useragent");
+            Client.Headers["User-Agent"] = "Mozilla/5.0 (X11; Linux x86_64; rv:106.0) Gecko/20100101 Firefox/106.0";//Config.GetString("search.useragent");
 
             string response = Client.DownloadString(BuildQuery(text, true, gif));
             
@@ -88,48 +88,69 @@ namespace FarField
             var parsedJsonResponse = JObject.Parse(jsonResponse);
 
             var arr = (JArray)parsedJsonResponse["data"];
-            var toTraverse = new List<JArray>() { arr };
+            var toTraverse = new List<JToken>() { arr };
             var results = new List<string>();
 
             while (toTraverse.Any())
             {
-                var nextArr = toTraverse[0];
+                var nextToken = toTraverse[0];
                 toTraverse.RemoveAt(0);
 
-                if (nextArr.Count > 4)
+                if (nextToken is JArray nextArr)
                 {
-                    if (nextArr[0].Type != JTokenType.Integer)
-                        goto cont;
+                    if (nextArr.Count > 4)
+                    {
+                        if (nextArr[0].Type != JTokenType.Integer)
+                            goto cont;
 
-                    if (nextArr[0].Value<int>() != 0)
-                        goto cont;
+                        if (nextArr[0].Value<int>() != 0)
+                            goto cont;
 
-                    if (nextArr[2].Type != JTokenType.Array || nextArr[3].Type != JTokenType.Array)
-                        goto cont;
+                        if (nextArr[2].Type != JTokenType.Array || nextArr[3].Type != JTokenType.Array)
+                            goto cont;
 
-                    var firstArr = nextArr[2] as JArray;
-                    var secondArr = nextArr[3] as JArray;
+                        var firstArr = nextArr[2] as JArray;
+                        var secondArr = nextArr[3] as JArray;
 
-                    if (firstArr.Count != 3 || secondArr.Count != 3)
-                        goto cont;
+                        if (firstArr.Count != 3 || secondArr.Count != 3)
+                            goto cont;
 
-                    if (firstArr[0].Type != JTokenType.String || secondArr[0].Type != JTokenType.String)
-                        goto cont;
+                        if (firstArr[0].Type != JTokenType.String || secondArr[0].Type != JTokenType.String)
+                            goto cont;
 
-                    if (!firstArr[0].Value<string>().Contains("gstatic.com/images?q="))
-                        goto cont;
-                    
-                    results.Add(secondArr[0].Value<string>());
-                    continue;
-                }
-                
-                cont:
-                foreach (var elem in nextArr)
-                {
-                    if (!(elem is JArray))
+                        if (!firstArr[0].Value<string>().Contains("gstatic.com/images?q="))
+                            goto cont;
+
+                        results.Add(secondArr[0].Value<string>());
                         continue;
-                    
-                    toTraverse.Add(elem as JArray);
+                    }
+
+                    cont:
+                    foreach (var elem in nextArr)
+                    {
+                        if (!(elem is JArray))
+                        {
+                            if (elem is JObject elemObj)
+                            {
+                                foreach (var child in elemObj)
+                                {
+                                    if (child.Value?.Type == JTokenType.Array || child.Value?.Type == JTokenType.Object)
+                                        toTraverse.Add(child.Value);
+                                }
+                            }
+                            continue;
+                        }
+
+                        toTraverse.Add(elem as JArray);
+                    }
+                }
+                else if (nextToken is JObject nextObj)
+                {
+                    foreach (var child in nextObj)
+                    {
+                        if (child.Value?.Type == JTokenType.Array || child.Value?.Type == JTokenType.Object)
+                            toTraverse.Add(child.Value);
+                    }
                 }
             }
 

@@ -234,7 +234,7 @@ namespace OsirisNext
         void AddMatcher(Connection conn, Message msg)
         {
             IFormatter bf = new BinaryFormatter();
-            MemoryStream ms = new MemoryStream(msg.Data);
+            MemoryStream ms = new MemoryStream(msg.DataSliced.ToArray());
             MessageMatcher matcher = (MessageMatcher)bf.Deserialize(ms);
             
             Console.WriteLine($"Adding matcher sent by {msg.Source}/{matcher.Node}: id: {matcher.ID}, match string: {matcher.MatchString}");
@@ -256,12 +256,17 @@ namespace OsirisNext
 
         void SendMessage(Connection conn, Message msg)
         {
-            MemoryStream ms = new MemoryStream(msg.Data);
+            // MemoryStream ms = new MemoryStream(msg.DataSliced.ToArray());
+            //
+            // string target = ms.ReadString();
+            // string message = ms.ReadString();
+            //
+            // ms.Close();
+            // var parts = msg.DataSliced.Unpack().Take(2)
 
-            string target = ms.ReadString();
-            string message = ms.ReadString();
-
-            ms.Close();
+            var data = msg.DataSliced;
+            data = data.ReadString(out string target);
+            data = data.ReadString(out string message);
             
             if (message.Contains('\0'))
                 foreach (var sub in message.Split('\0'))
@@ -273,11 +278,16 @@ namespace OsirisNext
         }
         void SendNotice(Connection conn, Message msg)
         {
-            MemoryStream ms = new MemoryStream(msg.Data);
-
-            string nick = ms.ReadString();
-            string source = ms.ReadString();
-            string message = ms.ReadString();
+            // MemoryStream ms = new MemoryStream(msg.DataSliced.ToArray());
+            //
+            // string nick = ms.ReadString();
+            // string source = ms.ReadString();
+            // string message = ms.ReadString();
+            
+            var data = msg.DataSliced;
+            data = data.ReadString(out string nick);
+            data = data.ReadString(out string source);
+            data = data.ReadString(out string message);
 
             message = message.Replace("\n", "");
             message = message.Replace("\r", "");
@@ -288,10 +298,9 @@ namespace OsirisNext
         
         void HasUser(Connection conn, Message msg)
         {
-            MemoryStream ms = new MemoryStream(msg.Data);
-
-            string source = ms.ReadString();
-            string nick = ms.ReadString();
+                var data = msg.DataSliced;
+            data = data.ReadString(out string source);
+            data = data.ReadString(out string nick);
 
             (var client, var channel) = IrcManager.GetChannelFromSource(source);
 
@@ -301,10 +310,11 @@ namespace OsirisNext
         
         private void GetUsers(Connection conn, Message msg)
         {
-            using (MemoryStream ms = new MemoryStream(msg.Data))
             using (MemoryStream ret = new MemoryStream())
             {
-                string source = ms.ReadString();
+                var data = msg.DataSliced;
+                data = data.ReadString(out string source);
+                
                 (var client, var channel) = IrcManager.GetChannelFromSource(source);
 
                 foreach (var pair in channel.UsersByMode)

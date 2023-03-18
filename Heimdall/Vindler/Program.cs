@@ -9,6 +9,7 @@ using System.IO;
 
 using Heimdall;
 using System.Net;
+using System.Threading;
 
 namespace Vindler
 {
@@ -54,7 +55,7 @@ namespace Vindler
 
         static void conn_MessageReceived(Connection connection, Message message)
         {
-            Console.WriteLine(Encoding.Unicode.GetString(message.Data));
+            Console.WriteLine(Encoding.Unicode.GetString(message.DataSliced));
         }
 
         static void listener_NewConnection(ConnectionToClient conn)
@@ -67,6 +68,25 @@ namespace Vindler
             conn.AddHandler("get_modules", GetModules);
 
             Clients.Add(conn);
+
+            new Thread(new ThreadStart(delegate
+            {
+                try
+                {
+                    while (true)
+                    {
+                        var messageLocal = new Message();
+                        if (!conn.PumpNextMessage(ref messageLocal))
+                        {
+                            throw new Exception("");
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine(e);
+                }
+            })).Start();
         }
 
         static void Pong(Connection conn, Message msg)
@@ -86,6 +106,7 @@ namespace Vindler
             Message reply = msg.Clone(true);
 
             reply.Data = ms.ToArray();
+            reply.DataLength = reply.Data.Length;
             reply.MessageType = "modules";
 
             conn.SendMessage(reply);
@@ -97,6 +118,7 @@ namespace Vindler
 
             reply.MessageType = "uptime";
             reply.Data = BitConverter.GetBytes((int)(DateTime.Now - Start).TotalSeconds);
+            reply.DataLength = reply.Data.Length;
 
             conn.SendMessage(reply);
         }

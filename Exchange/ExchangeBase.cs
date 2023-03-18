@@ -32,6 +32,9 @@ namespace Exchange
         void Connect();
         void Reconnect();
         void SubscribeToTicker(Ticker ticker);
+        TickerData? GetCurrentTickerData(Ticker ticker);
+        
+        List<Ticker> Tickers { get; set; }
 
         Ticker TickerFromSymbol(string symbol);
     }

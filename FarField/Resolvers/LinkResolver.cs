@@ -7,6 +7,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -45,7 +46,6 @@ namespace FarField
 
             // the following code is alternative, you may implement the function after your needs
             StringBuilder sb = new StringBuilder();
-
             using (WebResponse response = request.GetResponse())
             {
                 using (Stream stream = response.GetResponseStream())
@@ -252,25 +252,25 @@ namespace FarField
                                     using (var resp = await httpClient.GetAsync(url))
                                     {
                                         byte[] data = await resp.Content.ReadAsByteArrayAsync();
-                                        MemoryStream ms = new MemoryStream(data);
+                                        using (MemoryStream ms = new MemoryStream(data))
+                                        using (Bitmap bmp = new Bitmap(ms))
+                                        {
+                                            string hash = GetHash(data);
+                                            //string imgtype = mime.Split('/')[1].ToUpper();
+                                            string imgtype = bmp.RawFormat.ToString().ToUpperInvariant();
 
-                                        Bitmap bmp = new Bitmap(ms);
+                                            if (length != 0)
+                                                msg = string.Format("11{0} image({1}, {2}x{3})", imgtype,
+                                                    GetBoldLength(length),
+                                                    bmp.Width, bmp.Height);
+                                            else
+                                                msg = string.Format("11{0} image({1}x{2})", imgtype, bmp.Width,
+                                                    bmp.Height);
 
-                                        string hash = GetHash(data);
-                                        //string imgtype = mime.Split('/')[1].ToUpper();
-                                        string imgtype = bmp.RawFormat.ToString().ToUpperInvariant();
-
-                                        if (length != 0)
-                                            msg = string.Format("11{0} image({1}, {2}x{3})", imgtype,
-                                                GetBoldLength(length),
-                                                bmp.Width, bmp.Height);
-                                        else
-                                            msg = string.Format("11{0} image({1}x{2})", imgtype, bmp.Width,
-                                                bmp.Height);
-
-                                        if (valid_to_cache)
-                                            Cache.Add(url, msg, TimedCache.DefaultExpiry);
-                                        return new KeyValuePair<string, string>(url, msg);
+                                            if (valid_to_cache)
+                                                Cache.Add(url, msg, TimedCache.DefaultExpiry);
+                                            return new KeyValuePair<string, string>(url, msg);
+                                        }
                                     }
                                 }
                                 case LinkType.Video:
@@ -317,8 +317,8 @@ namespace FarField
 
         public static string GetHash(byte[] data)
         {
-            System.Security.Cryptography.SHA1CryptoServiceProvider sha = new System.Security.Cryptography.SHA1CryptoServiceProvider();
-            return BitConverter.ToString(sha.ComputeHash(data)).Replace("-", "").ToLower();
+            // System.Security.Cryptography.SHA1CryptoServiceProvider sha = new System.Security.Cryptography.SHA1CryptoServiceProvider();
+            return BitConverter.ToString(SHA1.HashData(data)).Replace("-", "").ToLower();
         }
 
         public static string GetHash(string path)

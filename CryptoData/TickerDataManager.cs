@@ -8,6 +8,8 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using HeimdallBase;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using NLog;
 
 namespace CryptoData
@@ -20,6 +22,8 @@ namespace CryptoData
 
         public static int SIZE = 86400 * 7;
 
+        private static Dictionary<string, List<(string, int)>> BufferSizeOverride = new Dictionary<string, List<(string, int)>>();
+        
         public static bool Loaded = false;
 
         public static Logger Log = LogManager.GetCurrentClassLogger();
@@ -32,6 +36,29 @@ namespace CryptoData
             {
                 SIZE = Config.GetInt("crypto.tickers.default_size");
             }
+
+            if (Config.GetValue<JObject>("crypto.tickers.size_override") != null)
+            {
+                var override_obj = Config.GetValue<JObject>("crypto.tickers.size_override");
+                foreach (var pair in override_obj)
+                {
+                    if (pair.Value.Type == JTokenType.Integer)
+                    {
+                        BufferSizeOverride[pair.Key.ToUpperInvariant()] = new List<(string, int)>()
+                            {("", pair.Value.Value<int>())};
+                    }
+                    else if (pair.Value.Type == JTokenType.Array)
+                    {
+                        if (!BufferSizeOverride.ContainsKey(pair.Key.ToUpperInvariant()))
+                            BufferSizeOverride[pair.Key.ToUpperInvariant()] = new List<(string, int)>();
+                        
+                        foreach (var child in pair.Value as JArray)
+                            BufferSizeOverride[pair.Key.ToUpperInvariant()].Add((child[0].Value<string>().ToUpperInvariant(), child[1].Value<int>()));   
+                    }
+                }
+            }
+            
+            Log.Info($"Buffer size overrides: {JsonConvert.SerializeObject(BufferSizeOverride)}");
         
             if (!Directory.Exists("./tickers") || Directory.GetFiles("./tickers", "*.buf").Length == 0 || create_bufs)
             {
@@ -60,11 +87,35 @@ namespace CryptoData
                         Log.Info($"Buffer {id} exists");
                         continue;
                     }
+
+                    var size = SIZE;
+
+                    if (BufferSizeOverride.ContainsKey(pair.First.ToUpperInvariant()))
+                    {
+                        foreach (var p in BufferSizeOverride[pair.First.ToUpperInvariant()])
+                        {
+                            if (p.Item1 == "" || p.Item1.Equals(pair.Second, StringComparison.InvariantCultureIgnoreCase))
+                            {
+                                size = p.Item2;
+                            }
+                        }
+                    }
+                    if (BufferSizeOverride.ContainsKey(pair.Second.ToUpperInvariant()))
+                    {
+                        foreach (var p in BufferSizeOverride[pair.Second.ToUpperInvariant()])
+                        {
+                            if (p.Item1 == "" || p.Item1.Equals(pair.First, StringComparison.InvariantCultureIgnoreCase))
+                            {
+                                size = p.Item2;
+                            }
+                        }
+                    }
+                            
                     
-                    Buffers.AddBuffer(id, SIZE);
+                    Buffers.AddBuffer(id, size);
                     //buffer.Save();
 
-                    Log.Info($"Added buffer {id} ({t}/{total})");
+                    Log.Info($"Added buffer {id} of {size} elems ({t}/{total})");
 
                     //Buffers.Buffers[id].Save();
                     q++;
@@ -72,7 +123,7 @@ namespace CryptoData
                     if (q % (Buffers.MaximumBufferCountPerFile / 2) == 0)
                     {
                         GC.Collect();
-                        if (Console.KeyAvailable)
+                        if (true || Console.KeyAvailable)
                         {
                             Log.Info($"Shutting down...");
                             Buffers.Save();

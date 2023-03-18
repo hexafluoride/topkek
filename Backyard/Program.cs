@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using HeimdallBase;
 using InfixParser.Functions;
@@ -27,6 +28,9 @@ namespace Backyard
         public QuoteUtil Quotes { get; set; } = new();
         public TellManager TellManager { get; set; }
         public RemindManager RemindManager { get; set; }
+        public HashSet<string> DoNotUseIndex { get; set; } = new();
+        public (string, string, string)[] DoNotUse { get; set; }
+        public HashSet<string> PolicedSources { get; set; } = new();
         
         public void Start(string[] args)
         {
@@ -51,12 +55,15 @@ namespace Backyard
                 {"$config", Configuration},
                 {"$rehash", Rehash},
                 {".comic", GenerateComic},
+                {".ttscomic", GenerateComic},
                 {".comicimg ", SetComicImage},
+                {".comicvoice", SetComicVoice},
                 {"s/", TrySubstitute},
                 {"", ChannelMessage},
                 {".ram", ShowRam},
                 {".quote", BetterQuote},
             };
+
             
             Init(args, BackyardMain);
         }
@@ -98,6 +105,61 @@ namespace Backyard
             
             if (File.Exists("wetfish.csv"))
                 Quotes.LoadFromCsv("Wetfish", "wetfish.csv");
+            
+            if (File.Exists("donotuse.json"))
+            {
+                var local = JsonDocument.Parse(File.ReadAllText("donotuse.json")).RootElement.EnumerateArray()
+                    .Select(j => j.EnumerateArray().Select(p => p.GetString()).ToArray()).ToArray();
+
+                var len = local[0].Length;
+                var tuples = new List<(string, string, string)>();
+                
+                for (int i = 0; i < len; i++)
+                {
+                    (var dontUse, var instead, var description) = (local[0][i], local[1][i], local[2][i]);
+
+                    if (dontUse is null || instead is null || description is null)
+                        continue;
+                    
+                    if (dontUse.Contains('('))
+                    {
+                        dontUse = dontUse.Remove(dontUse.IndexOf('('), dontUse.IndexOf(')') - (dontUse.IndexOf('(') - 1)).Trim();
+                    }
+
+                    var candidates = new List<string>() { dontUse };
+                    if (dontUse.Contains('/'))
+                        candidates = dontUse.Split('/').ToList();
+
+                    if (dontUse.Contains(','))
+                        candidates = dontUse.Split(',').ToList();
+
+                    candidates = candidates.Select(c => c.ToLowerInvariant().Trim()).ToList();
+
+                    description = description.Replace("\n", "");
+                    
+                    foreach (var candidate in candidates)
+                    {
+                        if (DoNotUseIndex.Add(candidate))
+                            tuples.Add((candidate, instead, description));
+                    }
+                }
+
+                DoNotUse = tuples.ToArray();
+
+                foreach (var tuple in DoNotUse)
+                {
+                    Console.WriteLine($"Do not say {tuple.Item1}, use {tuple.Item2} instead. {tuple.Item3}");
+                }
+
+                foreach (var source in Config.GetArray<string>("police.sources"))
+                    PolicedSources.Add(source);
+            }
+
+            Connection.SendMessage("t", "tt", "router");
+            var modules = GetModules();
+            Console.WriteLine(modules.Length);
+            Connection.SendMessage("t", "ttt", "router");
+            // Connection.SendMessage("t", "tttt", "router");
         }
 
         void BetterQuote(string args, string source, string n)
@@ -152,6 +214,23 @@ namespace Backyard
                     foreach (var p in RemindManager.SeenTracker.Where(s => s.Key.Nick == n))
                         p.Value.Set();
 
+            if (PolicedSources.Contains(source))
+            {
+                foreach ((var forbidden, var instead, var description) in DoNotUse)
+                {
+                    var index = args.IndexOf(forbidden, StringComparison.InvariantCultureIgnoreCase);
+                    if (index == -1)
+                        continue;
+                    
+                    var end = index + forbidden.Length;
+                    if ((index == 0 || !char.IsLetterOrDigit(args[index - 1])) && (end == args.Length || !char.IsLetterOrDigit(args[end])))
+                    {
+                        SendMessage($"{n}: Try to avoid saying \x02{forbidden}\x02; use \x02{instead}\x02 instead. {description}", source);
+                        break;
+                    }
+                }
+            }
+            
             if (!args.StartsWith(".tell") && !args.StartsWith(".ctell")) // TODO unhack
             {
                 var tells = TellManager.GetTells(source, n);

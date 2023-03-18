@@ -19,6 +19,7 @@ namespace FarField
 
         public void Load()
         {
+            return;
             if (!File.Exists("./cache"))
                 return;
 
@@ -41,6 +42,8 @@ namespace FarField
 
         public void Save()
         {
+            return;
+            
             try
             {
                 var formatter = new BinaryFormatter();
@@ -70,7 +73,7 @@ namespace FarField
 
         public void SaveStats()
         {
-            File.WriteAllLines("./cache-stats", new string[] { RequestCount.ToString(), HitCount.ToString() });
+            // File.WriteAllLines("./cache-stats", new string[] { RequestCount.ToString(), HitCount.ToString() });
         }
 
         public TimedCache()
@@ -96,7 +99,8 @@ namespace FarField
 
             if (item != null)
             {
-                item = new CacheItem(id, content, expiry);
+                item.Expiry = expiry;
+                // item = new CacheItem(id, content, expiry);
                 return;
             }
 

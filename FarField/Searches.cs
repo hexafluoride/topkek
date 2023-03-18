@@ -6,8 +6,17 @@ namespace FarField
 {
     public partial class FarField
     {
+        bool SearchEnabled(string source)
+        {
+            var trimmedSource = source.Contains('/') ? source.Substring(0, source.IndexOf('/')) : source;
+            return !GetUserDataForSourceAndNick<bool>(source, "", "search.disabled") && !GetUserDataForSourceAndNick<bool>(trimmedSource, "", "search.disabled");
+        }
+    
         void TwitterSearch(string args, string source, string n)
         {
+            if (!SearchEnabled(source))
+                return;
+            
             args = args.Substring("?tw".Length).Trim();
 
             var tweet = TwitterUtil.GetSearchResult(args);
@@ -16,6 +25,9 @@ namespace FarField
         }
         void YoutubeSearch(string args, string source, string n)
         {
+            if (!SearchEnabled(source))
+                return;
+            
             if (args.StartsWith(".youtube"))
                 args = args.Substring(9).Trim();
             else
@@ -34,6 +46,8 @@ namespace FarField
         
         void ImageSearch(string args, string source, string n)
         {
+            if (!SearchEnabled(source))
+                return;
             bool random = args[2] == 'r';
 
             args = args.Substring(".im".Length).Trim();
@@ -52,6 +66,8 @@ namespace FarField
 
         void GifSearch(string args, string source, string n)
         {
+            if (!SearchEnabled(source))
+                return;
             bool random = args[3] == 'r';
 
             args = args.Substring(".gif".Length).Trim();
@@ -66,6 +82,8 @@ namespace FarField
 
         void TumblrSearch(string args, string source, string n)
         {
+            if (!SearchEnabled(source))
+                return;
             bool random = args[3] == 'r';
 
             args = args.Substring(".tu".Length + (random ? 1 : 0)).Trim();
@@ -77,6 +95,8 @@ namespace FarField
         
         void DdgSearch(string args, string source, string n)
         {
+            if (!SearchEnabled(source))
+                return;
             try
             {
                 ManualResetEvent finished = new ManualResetEvent(false);

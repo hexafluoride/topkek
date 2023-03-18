@@ -69,6 +69,13 @@ namespace Exchange
             Endpoint = endpoint;
         }
         
+        public TickerData? GetCurrentTickerData(Ticker ticker)
+        {
+            return TickerData.ContainsKey(ticker) ? TickerData[ticker] : null;
+        }
+
+        public List<Ticker> Tickers { get; set; } = new();
+
         public void Connect()
         {
             ExchangeBalances = new Dictionary<string, double>();
@@ -579,6 +586,7 @@ namespace Exchange
 
                 Currencies.Add(left);
                 Currencies.Add(right);
+                Tickers.Add(new Ticker(left, right, this));
             }
         }
 

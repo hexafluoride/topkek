@@ -27,8 +27,8 @@ namespace ChatSharp
                 foreach (char c in illegalCharacters)
                     message = message.Replace(c.ToString(), "");
 
-                if (message.Length > 450)
-                    message = message.Substring(0, 450);
+                // if (message.Length > 450)
+                //     message = message.Substring(0, 450);
 
                 if (!destinations.Any()) throw new InvalidOperationException("Message must have at least one target.");
                 if (illegalCharacters.Any(message.Contains)) throw new ArgumentException("Illegal characters are present in message.", "message");
