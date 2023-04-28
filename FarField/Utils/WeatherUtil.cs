@@ -16,7 +16,7 @@ namespace FarField
             {
                 string unit_code = preferMetric ? "si" : "us";
 //                string unit_code = "si";
-                string cache_id = "weather:" + lat.ToString() + "," + lng.ToString() + "#" + unit_code;
+                string cache_id = "weather:" + lat.ToString("0.000000") + "," + lng.ToString("0.000000") + "#" + unit_code;
 
                 try
                 {

@@ -191,17 +191,17 @@ namespace CryptoData
             
             if (quoteToken != "usdt")
             {
-                return "Sorry";
+                return $"{nick}: Sorry";
             }
             
             if (leverage < 1 || leverage > 500)
             {
-                return "Leverage must be between 1x and 500x";
+                return $"{nick}: Leverage must be between 1x and 500x. Syntax is like !trade long btc 100 25 for $100 worth of BTC at 25x leverage.";
             }
             var id = GetUserIdentifier(source, nick);
             if (!UserStates.ContainsKey(id))
             {
-                return "You are not in the trade program";
+                return $"{nick}: You are not in the trade program";
             }
             
             var userState = UserStates[id];
@@ -215,7 +215,7 @@ namespace CryptoData
 
                 if (collateral > hasInToken)
                 {
-                    return "Insufficient balance";
+                    return $"{nick}: Insufficient balance";
                 }
 
                 var entryPrice = (decimal) CryptoHandler.ConvertPrice(actualToken, quoteToken, 1);
@@ -249,7 +249,7 @@ namespace CryptoData
             
             if (!UserStates.ContainsKey(id))
             {
-                return "You are not in the trade program";
+                return $"{nick}: You are not in the trade program";
             }
             
             var userState = UserStates[id];
@@ -265,12 +265,12 @@ namespace CryptoData
 
                 if (quotedOut <= 0)
                 {
-                    return $"Failed to fetch the price of {buyToken.ToUpperInvariant()}. Try again if the coin exists";
+                    return $"{nick}: Failed to fetch the price of coin \"{buyToken.ToUpperInvariant()}\". Try again if the coin exists";
                 }
 
                 if (amount <= 0 || amount > hasInToken)
                 {
-                    return "Insufficient funds";
+                    return $"{nick}: Insufficient funds. You have {hasInToken} {sellToken}";
                 }
                 
                 var unitPrice = quotedOut / amount;
@@ -366,7 +366,7 @@ namespace CryptoData
                 UserStates[id].CumulativePnl = pnl;
 
                 return
-                    $"Being a wuss, you've added a ${totalUsd:0.00} loss (the value of your total assets) to your cumulative PNL counter (now ${pnl:0.00}). If you change your mind, do !trade undo for a LIMITED TIME to go back to your previous state.";
+                    $"{nick}: Being a wuss, you've added a ${totalUsd:0.00} loss (the value of your total assets) to your cumulative PNL counter (now ${pnl:0.00}). If you change your mind, do !trade undo for a LIMITED TIME to go back to your previous state.";
             }
             else
             {

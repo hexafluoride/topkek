@@ -15,6 +15,8 @@ namespace FarField
             var trimmedSource = source.Substring(0, source.IndexOf('/'));
             args = args.Substring(".horoscope".Length).Trim();
             var sign = args;
+            SendMessage("No horoscopes for now! The API is dead!", source);
+            return;
 
             lock (HoroscopeUtil)
             {

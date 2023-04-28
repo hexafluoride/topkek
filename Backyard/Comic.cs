@@ -404,7 +404,7 @@ namespace Backyard
                         var response = uploadClient.PostAsync("https://wiki.wetfish.net/upload.php", content).Result;
                         var respStr = response.Content.ReadAsStringAsync().Result;
                         var urlFragment = respStr.Substring(respStr.IndexOf("upload/"));
-                        urlFragment = urlFragment.Substring(0, urlFragment.IndexOf('\''));
+                        urlFragment = urlFragment.Substring(0, urlFragment.IndexOf('\"'));
                         return $"https://wiki.wetfish.net/{urlFragment}";
                     }
                     else if (uploadTarget == "uguu")
