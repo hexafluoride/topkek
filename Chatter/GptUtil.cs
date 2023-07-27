@@ -212,6 +212,228 @@ public interface IGptInstance
     void Kill();
 }
 
+public class NetworkedGptInstance : IGptInstance
+{
+    
+    public class Message
+    {
+        public JsonElement? Body { get; set; }
+        public int Id { get; set; }
+        public string Method { get; set; }
+    }
+    
+    public bool ModelDead { get; private set; }
+    
+    private TcpClient Connection { get; set; }
+    private StreamReader Reader { get; set; }
+    private StreamWriter Writer { get; set; }
+
+    public Dictionary<int, GenerationRequest> Requests = new();
+
+    public static JsonSerializerOptions JsonSerializerOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = false
+    };
+    
+    public NetworkedGptInstance(string host, int port)
+    {
+        Connection = new(host, port);
+        var stream = Connection.GetStream();
+        Reader = new StreamReader(stream);
+        Writer = new StreamWriter(stream) {AutoFlush = true};
+    }
+
+    public Message? ConsumeMessage()
+    {
+        if (!Connection.Connected)
+        {
+            Kill();
+        }
+
+        if (ModelDead)
+        {
+            return null;
+        }
+        
+        var line = Reader.ReadLine();
+        if (line is null)
+        {
+            return null;
+        }
+        return JsonSerializer.Deserialize<Message>(line, JsonSerializerOptions);
+    }
+
+    public void SendMessage(Message message)
+    {
+        if (!Connection.Connected)
+        {
+            Kill();
+        }
+
+        if (ModelDead)
+        {
+            return;
+        }
+        
+        var serialized = JsonSerializer.Serialize(message, JsonSerializerOptions);
+        Writer.WriteLine(serialized);
+    }
+
+    public void SubmitRequest(JsonElement body, int id)
+    {
+        var request = new Message()
+        {
+            Method = "submit",
+            Id = id,
+            Body = body
+        };
+        
+        SendMessage(request);
+        var response = ConsumeMessage() ?? throw new Exception("Failed to consume reply to request submission");
+        if (response.Id != id)
+        {
+            throw new Exception($"Expected reply to {id}, got {response.Id}");
+        }
+
+        if (response.Method != "ok")
+        {
+            throw new Exception($"Expected \"ok\", got {response.Method}");
+        }
+    }
+    
+    public int[] Tokenize(string input)
+    {
+        throw new NotImplementedException();
+    }
+
+    public int RequestTokenize(string input)
+    {
+        lock (Connection)
+        {
+            var id = Random.Shared.Next();
+            var request = JsonSerializer.SerializeToElement(new
+            {
+                type = "tokenize",
+                id,
+                text = input
+            });
+
+            SubmitRequest(request, id);
+            return id;
+        }
+    }
+
+    public int RequestDetokenize(IEnumerable<int> input)
+    {
+        var id = Random.Shared.Next();
+        var request = JsonSerializer.SerializeToElement(new
+        {
+            type = "detokenize",
+            id,
+            tokens = input.ToList()
+        });
+        
+        SubmitRequest(request, id);
+        return id;
+    }
+
+    public int RequestGeneration(GenerationRequest request)
+    {
+        var id = Random.Shared.Next();
+        request.id = id;
+        var requestEncoded = JsonSerializer.SerializeToElement(request);
+        
+        Console.WriteLine($"Requested once with id {id}");
+        lock (Requests)
+        {
+            Requests[id] = request;
+        }
+        SubmitRequest(requestEncoded, id);
+        return id;
+    }
+
+    public GenerationResult? PollForResponse(int requestId, bool wait)
+    {
+        lock (Connection)
+        {
+            var pollRequest = new Message()
+            {
+                Method = "read",
+                Id = requestId
+            };
+
+            // SendMessage(pollRequest);
+            Message? nextResponse = null;
+
+            do
+            {
+                if (nextResponse is not null)
+                {
+                    Thread.Sleep(100);
+                }
+
+                SendMessage(pollRequest);
+                nextResponse = ConsumeMessage() ?? throw new Exception($"Could not read reply to poll");
+
+                if (nextResponse.Id != requestId)
+                {
+                    throw new Exception($"Expected reply to {requestId}, got {nextResponse.Id}");
+                }
+            } while (wait && nextResponse.Method == "no" && !ModelDead);
+
+            if (nextResponse.Method == "no")
+            {
+                return null;
+            }
+            else if (nextResponse.Method != "result")
+            {
+                throw new Exception($"Expected \"result\" or \"no\", got {nextResponse.Method}");
+            }
+
+            var resultElement = nextResponse.Body.Value.GetProperty("result");
+            string? resultText = null;
+
+            if (resultElement.TryGetProperty("response_decoded", out JsonElement responseDecodedElement))
+            {
+                resultText = responseDecodedElement.GetString();
+
+                Console.WriteLine($"Raw output for request {requestId}:");
+                Console.WriteLine(resultText);
+                resultText = resultText.Replace("</s>", "");
+                Console.WriteLine($"Substituted: {resultText}");
+            }
+
+            Dictionary<string, double> timings = new();
+            double[][]? probabilities = null;
+
+            if (resultElement.TryGetProperty("timings", out JsonElement timingsElement))
+            {
+                timings = timingsElement.Deserialize<Dictionary<string, double>>() ?? timings;
+            }
+
+            if (resultElement.TryGetProperty("probs", out JsonElement probsElement))
+            {
+                probabilities = probsElement.EnumerateArray()
+                    .Select(sub => sub.EnumerateArray().Select(d => d.GetDouble()).ToArray()).ToArray();
+            }
+
+            lock (Requests)
+            {
+                var request = Requests.ContainsKey(requestId) ? Requests[requestId] : null;
+                var resultObject = new GenerationResult(request, resultText, timings, probabilities);
+                return resultObject;
+            }
+        }
+    }
+
+    public void Kill()
+    {
+        Connection.Close();
+        ModelDead = true;
+    }
+}
+
 public class GptInstance : IGptInstance
 {
     
@@ -523,7 +745,7 @@ public class ChatLine
             Nick = channel.Config.AssignedNick;
         }
         
-        var ret = this.ToString();
+        var ret = this.ToString();s
         Nick = oldNick;
         Message = oldMessage;
         return ret;
@@ -987,7 +1209,11 @@ public class GptUtil
             bool canReply = args.Contains(OwnNick, StringComparison.InvariantCultureIgnoreCase) && !Config.GetValue<bool>($"chatter.noreply.{source}");
             if (Random.Shared.NextDouble() < chatChance || canReply)
             {
-                Chatter.ChatOneShot($"{canReply}\n{args}", source, nick);
+                var enqueueResult = Chatter.EnqueueChatOneShot($"{canReply}\n{args}", source, nick);
+                if (canReply && enqueueResult is not null)
+                {
+                    throw new ApplicationException(enqueueResult);
+                }
             }
         }
     }
@@ -1082,6 +1308,8 @@ public class GptUtil
         {
             linesComposed += append;
         }
+        
+        // TODO: probe newline likelihood backwards
 
         var longPrefixes = new[] { "!tldr", ".wiki", ".ud" };
 
@@ -1136,6 +1364,55 @@ public class GptUtil
         return requestId;
     }
 
+    IGptInstance? CreateModelFromProcess(string model)
+    {
+        
+        var binary = Config.GetString("gpt.binary");
+        if (!File.Exists(binary))
+            throw new Exception();
+            
+        var psi = new ProcessStartInfo(binary, $"{model}");
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardInput = true;
+
+        if (GptProcesses.Count == 0)
+        {
+            psi.Environment["CUDA_VISIBLE_DEVICES"] = "0";
+        }
+        else
+        {
+            psi.Environment["CUDA_VISIBLE_DEVICES"] = "1";
+        }
+
+        if (GptProcesses.ContainsKey(model) && !GptProcesses[model].ModelDead)
+        {
+            GptProcesses[model].Kill();
+        }
+
+        try
+        {
+            var GptProcess = Process.Start(psi) ?? throw new Exception();
+            var instance = new GptInstance(GptProcess);
+
+            var line = GptProcess.StandardOutput.ReadLine();
+
+            while (line != "ready")
+            {
+                Console.WriteLine(line);
+                line = GptProcess.StandardOutput.ReadLine();
+            }
+
+            Console.WriteLine($"Model marked ready");
+
+            return instance;
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine(e);
+            throw;
+        }
+    }
+    
     public void StartInstanceIfNotStarted(string source)
     {
         lock (GptProcesses)
@@ -1170,44 +1447,10 @@ public class GptUtil
                 }
             }
 
-            var binary = Config.GetString("gpt.binary");
-            if (!File.Exists(binary))
-                throw new Exception();
-            
-            var psi = new ProcessStartInfo(binary, $"{model}");
-            psi.RedirectStandardOutput = true;
-            psi.RedirectStandardInput = true;
-
-            if (GptProcesses.Count == 0)
-            {
-                psi.Environment["CUDA_VISIBLE_DEVICES"] = "0";
-            }
-            else
-            {
-                psi.Environment["CUDA_VISIBLE_DEVICES"] = "1";
-            }
-
-            if (GptProcesses.ContainsKey(model) && !GptProcesses[model].ModelDead)
-            {
-                GptProcesses[model].Kill();
-            }
-
             try
             {
-                var GptProcess = Process.Start(psi) ?? throw new Exception();
-                var instance = new GptInstance(GptProcess);
-
-                var line = GptProcess.StandardOutput.ReadLine();
-
-                while (line != "ready")
-                {
-                    Console.WriteLine(line);
-                    line = GptProcess.StandardOutput.ReadLine();
-                }
-
-                Console.WriteLine($"Model marked ready");
-
-                GptProcesses[model] = instance;
+                // GptProcesses[model] = CreateModelFromProcess(model) ?? throw new Exception();
+                GptProcesses[model] = new NetworkedGptInstance("127.0.0.1", 8952);
             }
             catch (Exception e)
             {

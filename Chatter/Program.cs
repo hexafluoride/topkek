@@ -1,4 +1,6 @@
-﻿using System.Diagnostics;
+﻿using System.Collections.Concurrent;
+using System.ComponentModel.Design;
+using System.Diagnostics;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -36,9 +38,9 @@ namespace Chatter
                 {".wipe", HandleWipe},
                 {".history", HandleHistory},
                 {".timings", PrintTimings},
-                {".chat", ChatOneShot},
-                {".complete ", ChatOneShot},
-                {".clean", ChatOneShot},
+                {".chat", EnqueueChatWrapper},
+                {".complete ", EnqueueChatWrapper},
+                {".clean", EnqueueChatWrapper},
                 {"", HandleTtsBroken},
                 {".tokenize ", Tokenize},
                 {".decode ", Detokenize},
@@ -51,6 +53,8 @@ namespace Chatter
                 {".gptram", GetRam},
                 {".notify", Notify}
             };
+
+            // new Thread(ChatLoop).Start();
 
             Init(args);
         }
@@ -463,8 +467,21 @@ namespace Chatter
                     }
                 }
             }
-            
-            GptUtil.RecordLine(args, source, n);
+
+            try
+            {
+                GptUtil.RecordLine(args, source, n);
+            }
+            catch (ApplicationException e)
+            {
+                Console.WriteLine(e);
+                SendMessage($"{n}: {e.Message}", source);
+                // throw;
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+            }
         }
 
         private void DiffusionFulfilled(int seed, string url, string source)
@@ -475,8 +492,145 @@ namespace Chatter
 
         private Dictionary<string, List<(char, string)>> CachedUsers = new();
 
+
+        public ConcurrentQueue<(string, string, string)> ChatQueue = new();
+
+        // public void ChatLoop()
+        // {
+        //     while (true)
+        //     {
+        //         (string, string, string) result;
+        //         while (!ChatQueue.TryDequeue(out result))
+        //         {
+        //             Thread.Sleep(50);
+        //         }
+        //         
+        //         Console.WriteLine($"Dequeued {result.Item1}, {result.Item2}, {result.Item3}");
+        //         ChatOneShotPrivate(result.Item1, result.Item2, result.Item3);
+        //     }
+        // }
+
+        public void EnqueueChatWrapper(string args, string source, string n)
+        {
+            var queueResult = EnqueueChatOneShot(args, source, n);
+            if (queueResult is not null)
+            {
+                SendMessage($"{n}: {queueResult}", source);
+            }
+        }
         
-        public void ChatOneShot(string args, string source, string n)
+
+        public class UsageRecord
+        {
+            public string Nick { get; set; }
+            public string Source { get; set; }
+            public DateTime TimeReceived { get; set; }
+            public DateTime TimeFulfilled { get; set; }
+        }
+
+        public List<UsageRecord> ChatUsages = new();
+        public Dictionary<string, DateTime> LastNotified = new();
+
+        public string? EnqueueChatOneShot(string args, string source, string n)
+        {
+            Console.WriteLine($"Called with {args}, {source}, {n}");
+            bool involuntary = args.Contains('\n') && (!bool.TryParse(args.Split('\n')[0], out bool a) || !a);
+            // int totalQueueLength = ChatQueue.Count;
+            // int thisNickQueueLength = ChatQueue.Count(e => string.Equals(e.Item3, n, StringComparison.InvariantCultureIgnoreCase));
+
+            var thisUsage = new UsageRecord()
+            {
+                Nick = n,
+                Source = source,
+                TimeReceived = DateTime.UtcNow
+            };
+        
+            // Console.WriteLine($"Queue lengths: {thisNickQueueLength}, {totalQueueLength}");
+            //
+            // if (totalQueueLength > Config.GetInt("chatter.antispam.global"))
+            // {
+            //     Console.WriteLine($"Total queue length {totalQueueLength} exceeds limit");
+            //     return "Too many requests in global queue.";
+            // }
+            //
+            // if (thisNickQueueLength > Config.GetInt("chatter.antispam.user"))
+            // {
+            //     Console.WriteLine($"User queue length {thisNickQueueLength} exceeds limit");
+            //     return "Too many requests in queue from you specifically.";
+            // }
+
+            if (!involuntary)
+            {
+                var lastRelevantUsages = new List<UsageRecord>() { thisUsage };
+
+                for (int i = 0; i < 50; i++)
+                {
+                    var targetIndex = ChatUsages.Count - (i + 1);
+                    if (targetIndex < 0)
+                    {
+                        continue;
+                    }
+
+                    var usage = ChatUsages[targetIndex];
+                    if (string.Equals(usage.Nick, n, StringComparison.InvariantCultureIgnoreCase))
+                    {
+                        var previousUsage = lastRelevantUsages.LastOrDefault();
+                        if (previousUsage is null)
+                        {
+                            lastRelevantUsages.Add(usage);
+                        }
+                        else
+                        {
+                            var gap = Math.Abs((previousUsage.TimeReceived - usage.TimeFulfilled).TotalSeconds);
+                            Console.WriteLine($"Gap between {usage} and {previousUsage}: {gap:0.00}s");
+                            
+                            if (gap < 1d)
+                            {
+                                lastRelevantUsages.Add(usage);
+                            }
+                            else
+                            {
+                                Console.WriteLine($"Large gap, breaking at {lastRelevantUsages.Count} usages");
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                lastRelevantUsages.Reverse();
+
+                if (lastRelevantUsages.Count >= Config.GetInt("chatter.antispam.user"))
+                {
+                    Console.WriteLine($"Relevant spammy usage count {lastRelevantUsages.Count} exceeds limit");
+                    thisUsage.TimeFulfilled = DateTime.UtcNow;
+                    ChatUsages.Add(thisUsage);
+
+                    if (!LastNotified.ContainsKey(n) || (DateTime.UtcNow - LastNotified[n]).TotalSeconds > 5)
+                    {
+                        LastNotified[n] = DateTime.UtcNow;
+                        return "You are spamming me a bit too much. Give me some room to breathe between requests.";
+                    }
+                    else
+                    {
+                        return null;
+                    }
+                }
+            }
+
+            // ChatQueue.Enqueue((args, source, n));
+            ChatOneShotPrivate(args, source, n);
+            thisUsage.TimeFulfilled = DateTime.UtcNow;
+            ChatUsages.Add(thisUsage);
+
+            while (ChatUsages.Count > 150)
+            {
+                ChatUsages.RemoveAt(0);
+            }
+            
+            return null;
+        }
+
+        public void ChatOneShotPrivate(string args, string source, string n)
         {
             bool useLock = true;
             try
@@ -959,7 +1113,7 @@ namespace Chatter
 
                     if (repeat)
                     {
-                        ChatOneShot(ponder, source, n);
+                        EnqueueChatOneShot(ponder, source, n);
                     }
                 }
             }
