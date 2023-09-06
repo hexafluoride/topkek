@@ -87,18 +87,24 @@ namespace Backyard
 
             RemindManager = new RemindManager();
             RemindManager.Load();
-            RemindManager.ReminderDone += (r) =>
-            {
-                LastReminder[r.Nick] = r;
-
-                if(!string.IsNullOrWhiteSpace(r.Message))
-                    SendMessage(
-                        $"{r.Nick}, you asked to be reminded of \"{r.Message}\" at {r.StartDate + GetTimezone(r.Token, r.Nick)}.", r.Token);
-                else
-                    SendMessage($"{r.Nick}, you asked for a reminder at {r.StartDate + GetTimezone(r.Token, r.Nick)}.", r.Token);
-            };
+            // RemindManager.ReminderDone += (r) =>
+            // {
+            //     LastReminder[r.Nick] = r;
+            //
+            //     lock (Connection.Client)
+            //     {
+            //         if (!string.IsNullOrWhiteSpace(r.Message))
+            //             SendMessage(
+            //                 $"{r.Nick}, you asked to be reminded of \"{r.Message}\" at {r.StartDate + GetTimezone(r.Token, r.Nick)}.",
+            //                 r.Token);
+            //         else
+            //             SendMessage(
+            //                 $"{r.Nick}, you asked for a reminder at {r.StartDate + GetTimezone(r.Token, r.Nick)}.",
+            //                 r.Token);
+            //     }
+            // };
             
-            Task.Factory.StartNew(RemindManager.TimingLoop);
+            // Task.Factory.StartNew(RemindManager.TimingLoop);
 
             if (File.Exists("yiffy.json"))
                 YiffDatabase = JObject.Parse(File.ReadAllText("yiffy.json"));

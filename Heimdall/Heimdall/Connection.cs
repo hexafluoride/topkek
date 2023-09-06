@@ -76,6 +76,15 @@ namespace Heimdall
         {
             Stop();
 
+            try
+            {
+                Client.Close();
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+            }
+
             if (Handlers.Any(t => t.Key == "bye"))
             {
                 Handlers.First(t => t.Key == "bye").Value(this, null);
@@ -152,13 +161,13 @@ namespace Heimdall
         //     }
         // }
 
-        public byte[] WaitFor(string message, string type, string destination, string response_type)
+        public byte[] WaitFor(string message, string type, string destination, string response_type, CancellationToken cancellationToken = default)
         {
             SendMessage(message, type, destination);
 
             var tempMessage = new Message();
             var backedUp = new List<Message>();
-            while (true)
+            while (!cancellationToken.IsCancellationRequested)
             {
                 PumpNextMessage(ref tempMessage);
                 if (tempMessage.MessageType == response_type)
@@ -166,14 +175,16 @@ namespace Heimdall
                     return tempMessage.DataSliced.ToArray();
                 }
             }
+            
+            throw new OperationCanceledException();
         }
 
-        public byte[] WaitFor(byte[] message, string type, string destination, string response_type)
+        public byte[] WaitFor(byte[] message, string type, string destination, string response_type, CancellationToken cancellationToken = default)
         {
             SendMessage(message, type, destination);
 
             var tempMessage = new Message();
-            while (true)
+            while (!cancellationToken.IsCancellationRequested)
             {
                 PumpNextMessage(ref tempMessage);
                 if (tempMessage.MessageType == response_type)
@@ -181,6 +192,8 @@ namespace Heimdall
                     return tempMessage.DataSliced.ToArray();
                 }
             }
+
+            throw new OperationCanceledException();
         }
 
         private void HandleMessage(Connection conn, Message msg)
@@ -233,8 +246,11 @@ namespace Heimdall
         {
             try
             {
-                Message.SerializeTo(NetworkStream, Name, dest, type, data);
-                NetworkStream.Flush();
+                lock (Client)
+                {
+                    Message.SerializeTo(NetworkStream, Name, dest, type, data);
+                    NetworkStream.Flush();
+                }
             }
             catch (Exception e)
             {

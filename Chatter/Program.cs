@@ -535,8 +535,6 @@ namespace Chatter
         {
             Console.WriteLine($"Called with {args}, {source}, {n}");
             bool involuntary = args.Contains('\n') && (!bool.TryParse(args.Split('\n')[0], out bool a) || !a);
-            // int totalQueueLength = ChatQueue.Count;
-            // int thisNickQueueLength = ChatQueue.Count(e => string.Equals(e.Item3, n, StringComparison.InvariantCultureIgnoreCase));
 
             var thisUsage = new UsageRecord()
             {
@@ -544,20 +542,6 @@ namespace Chatter
                 Source = source,
                 TimeReceived = DateTime.UtcNow
             };
-        
-            // Console.WriteLine($"Queue lengths: {thisNickQueueLength}, {totalQueueLength}");
-            //
-            // if (totalQueueLength > Config.GetInt("chatter.antispam.global"))
-            // {
-            //     Console.WriteLine($"Total queue length {totalQueueLength} exceeds limit");
-            //     return "Too many requests in global queue.";
-            // }
-            //
-            // if (thisNickQueueLength > Config.GetInt("chatter.antispam.user"))
-            // {
-            //     Console.WriteLine($"User queue length {thisNickQueueLength} exceeds limit");
-            //     return "Too many requests in queue from you specifically.";
-            // }
 
             if (!involuntary)
             {

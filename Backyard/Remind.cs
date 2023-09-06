@@ -80,11 +80,14 @@ namespace Backyard
         
         void Remind(string args, string source, string n)
         {
+            SendMessage("Reminders are currently disabled. Please check back later!", source);
+            return;
+            
             args = args.Substring("!remind".Length).Trim();
 
             if(args == "" || args == "help")
             {
-                SendMessage("Usage: !remind <time> \"message\". Examples for <time>: 5 minutes, 2 weeks, 300 days, 13:00, december 5(set timezones with .tz). If the command is failing, try surrounding the message with double quotes(\").", source);
+                SendMessage("Usage: .remind <time> \"message\". Examples for <time>: 5 minutes, 2 weeks, 300 days, 13:00, december 5(set timezones with .tz). If the command is failing, try surrounding the message with double quotes(\").", source);
                 return;
             }
 

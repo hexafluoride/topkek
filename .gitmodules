@@ -1,0 +1,3 @@
+[submodule "Lanbridge"]
+	path = Lanbridge
+	url = https://github.com/hexafluoride/Lanbridge

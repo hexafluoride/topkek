@@ -93,11 +93,15 @@ namespace Backyard
                         Added.BetterWaitOne(nearest);
                     }
                     else
+                    {
+                        Console.WriteLine($"Waiting for reminder to be added");
                         Added.WaitOne();
+                    }
 
                     Added.Reset();
 
-                    var eligible = Reminders.Where(r => r.GetSpan().TotalSeconds < 2);
+                    var eligible = Reminders.Where(r => r.GetSpan().TotalSeconds < 2).ToList();
+                    Console.WriteLine($"Have {eligible.Count} eligible reminders");
 
                     foreach (var reminder in eligible)
                     {
@@ -107,7 +111,7 @@ namespace Backyard
                         SeenTrackedNicks.Add(reminder.Nick);
                         var trimmed = reminder.Token.Substring(0, reminder.Token.IndexOf('/'));
 
-                        Task.Factory.StartNew(delegate
+                        new Thread((ThreadStart)delegate
                         {
                             if (!SeenTracker[reminder].WaitOne(Config.GetInt("remind.telldelay")))
                             {
@@ -119,7 +123,7 @@ namespace Backyard
 
                             SeenTracker.Remove(reminder);
                             SeenTrackedNicks.Remove(reminder.Nick);
-                        });
+                        }).Start();
                     }
                 }
                 catch (Exception ex)

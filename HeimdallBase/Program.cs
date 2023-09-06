@@ -9,7 +9,8 @@ using Heimdall;
 namespace HeimdallBase
 {
     public class HeimdallBase
-    {   
+    {
+        public CancellationTokenSource CancellationTokenSource = new();
         public ConnectionToRouter Connection;
         public DateTime Start = DateTime.Now;
 
@@ -106,7 +107,13 @@ namespace HeimdallBase
         {
             List<string> ret = new List<string>();
 
-            byte[] modules = Connection.WaitFor("", "get_modules", "router", "modules");
+            CancellationTokenSource.TryReset();
+            CancellationTokenSource.CancelAfter(3000);
+            byte[] modules = Connection.WaitFor("", "get_modules", "router", "modules", CancellationTokenSource.Token);
+            if (modules.Length == 0)
+            {
+                return Array.Empty<string>();
+            }
 
             MemoryStream ms = new MemoryStream(modules);
 
@@ -133,7 +140,13 @@ namespace HeimdallBase
             if (!IsModuleUp(dest))
                 return -1;
 
-            byte[] data = Connection.WaitFor("", "get_uptime", dest, "uptime");
+            CancellationTokenSource.TryReset();
+            CancellationTokenSource.CancelAfter(3000);
+            byte[] data = Connection.WaitFor("", "get_uptime", dest, "uptime", CancellationTokenSource.Token);
+            if (data.Length == 0)
+            {
+                return -1;
+            }
             int ret = BitConverter.ToInt32(data, 0);
             return ret;
         }

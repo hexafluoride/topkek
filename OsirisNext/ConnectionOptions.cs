@@ -20,6 +20,9 @@ namespace OsirisNext
         public string Owner { get; set; }
         public bool NickServ { get; set; }
         public bool Ssl { get; set; }
+        public bool AllowInvalidSsl { get; set; }
+        public string ClientCertificate { get; set; }
+        public string ClientKey { get; set; }
         public bool ZncLogin { get; set; }
         public bool Delay { get; set; }
         public string ZncPassword { get; set; }

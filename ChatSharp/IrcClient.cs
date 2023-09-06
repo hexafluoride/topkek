@@ -11,6 +11,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading;
 using System.Linq;
+using System.Security.Cryptography.X509Certificates;
 
 namespace ChatSharp
 {
@@ -87,6 +88,8 @@ namespace ChatSharp
         public Stream NetworkStream { get; set; }
         public bool UseSSL { get; private set; }
         public bool IgnoreInvalidSSL { get; set; }
+        public string ClientCertPath { get; set; }
+        public string ClientKeyPath { get; set; }
         public Encoding Encoding { get; set; }
         public IrcUser User { get; set; }
         public ChannelCollection Channels { get; private set; }
@@ -232,7 +235,18 @@ namespace ChatSharp
                     NetworkStream = new SslStream(NetworkStream, false, (sender, certificate, chain, policyErrors) => true);
                 else
                     NetworkStream = new SslStream(NetworkStream);
-                ((SslStream)NetworkStream).AuthenticateAsClient(ServerHostname);
+
+                if (File.Exists(ClientCertPath))
+                {
+                    var certs = new List<X509Certificate>();
+                    var cert = X509Certificate2.CreateFromPemFile(ClientCertPath, ClientKeyPath);
+                    certs.Add(cert);
+                    ((SslStream)NetworkStream).AuthenticateAsClient(ServerHostname, new X509CertificateCollection(certs.ToArray()), false);
+                }
+                else
+                {
+                    ((SslStream) NetworkStream).AuthenticateAsClient(ServerHostname);
+                }
             }
 
             NetworkStream.BeginRead(ReadBuffer, ReadBufferIndex, ReadBuffer.Length, DataRecieved, null);

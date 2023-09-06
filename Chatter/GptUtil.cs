@@ -745,7 +745,7 @@ public class ChatLine
             Nick = channel.Config.AssignedNick;
         }
         
-        var ret = this.ToString();s
+        var ret = this.ToString();
         Nick = oldNick;
         Message = oldMessage;
         return ret;

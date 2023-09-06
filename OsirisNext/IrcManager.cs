@@ -59,7 +59,9 @@ namespace OsirisNext
             Client.Options = options;
             Client.Delay = options.Delay;
 
-            Client.IgnoreInvalidSSL = true;
+            Client.IgnoreInvalidSSL = options.AllowInvalidSsl;
+            Client.ClientCertPath = options.ClientCertificate;
+            Client.ClientKeyPath = options.ClientKey;
 
             Client.SetHandler("INVITE", new IrcClient.MessageHandler((c, msg) =>
             {

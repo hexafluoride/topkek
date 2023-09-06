@@ -24,8 +24,8 @@ namespace Backyard
                 return;
 
             bool movie = args.StartsWith(".ttscomic");
-
-            if (movie)
+            bool disabled = false;
+            if (disabled && movie)
             {
                 SendMessage($"{n}: TTS comics are currently disabled as I have been banned from the TikTok TTS API. Sorry!", source);
                 return;
@@ -404,7 +404,7 @@ namespace Backyard
                         var response = uploadClient.PostAsync("https://wiki.wetfish.net/upload.php", content).Result;
                         var respStr = response.Content.ReadAsStringAsync().Result;
                         var urlFragment = respStr.Substring(respStr.IndexOf("upload/"));
-                        urlFragment = urlFragment.Substring(0, urlFragment.IndexOf('\"'));
+                        urlFragment = urlFragment.Substring(0, urlFragment.IndexOfAny(new [] { '\'', '"' }));
                         return $"https://wiki.wetfish.net/{urlFragment}";
                     }
                     else if (uploadTarget == "uguu")
