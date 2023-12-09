@@ -5,6 +5,7 @@ public interface IChatLine
     string Nick { get; }
     string Contents { get; }
     List<int> Tokens { get; }
+    string Origin { get; set; }
 }
 
 public record ChatLine : IChatLine
@@ -12,6 +13,7 @@ public record ChatLine : IChatLine
     public string Nick { get; } = "";
     public string Contents { get; } = "";
     public List<int> Tokens { get; } = new();
+    public string Origin { get; set; } = "";
 
     public ChatLine(string nick, string contents, List<int> tokens)
     {

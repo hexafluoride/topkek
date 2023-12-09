@@ -80,8 +80,13 @@ namespace OsirisNext
             }));
             Client.SetHandler("PONG", new IrcClient.MessageHandler((c, msg) =>
             {
+                if (c.User.Nick != options.Nickname && Random.Shared.NextDouble() < 0.01)
+                {
+                    c.Nick(options.Nickname);
+                }
                 // Console.WriteLine("Received PONG from {0}", c.ServerAddress);
                 c.LastPong = DateTime.Now;
+
             }));
             Client.ConnectionComplete += (s, e) =>
             {

@@ -61,7 +61,7 @@ namespace Backyard
                 {"s/", TrySubstitute},
                 {"", ChannelMessage},
                 {".ram", ShowRam},
-                {".quote", BetterQuote},
+                // {".quote", BetterQuote},
             };
 
             

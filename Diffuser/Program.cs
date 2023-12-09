@@ -38,6 +38,7 @@ namespace Diffuser
                 {".aus ", HandleTts},
                 {".uk ", HandleTts},
                 {".jp ", HandleTts},
+                {".negative", SetNegative}
                 // {".gptwa ", GptWolfram}
             };
 
@@ -448,20 +449,88 @@ namespace Diffuser
 
             void SetParams(string chunk)
             {
-                foreach (var arg in chunk.Split(' ',
-                             StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                {
-                    var parts = arg.TrimStart('-').Split('=');
+                string? tag = null;
+                string? value = null;
+                StringBuilder current = new();
+                bool inQuote = false;
+                bool quoted = false;
+                bool escaping = false;
 
-                    if (parts.Length == 1)
+                void FinishCurrent()
+                {
+                    if (tag is null)
                     {
-                        request.Parameters[parts[0].ToLowerInvariant()] = "";
+                        tag = current.ToString();
                     }
                     else
                     {
-                        request.Parameters[parts[0].ToLowerInvariant()] = parts[1];
+                        value = current.ToString();
+                    }
+                    request.Parameters[tag] = value ?? "";
+                    tag = null;
+                    value = null;
+                    inQuote = false;
+                    escaping = false;
+                    quoted = false;
+                    current.Clear();
+                }
+                
+                for (int i = 0; i < chunk.Length; i++)
+                {
+                    char currentChar = chunk[i];
+                    if (!inQuote && currentChar == ' ')
+                    {
+                        // Commit current
+                        if (tag == null && quoted)
+                        {
+                            tag = "prompt";
+                        }
+                        FinishCurrent();
+                    }
+                    else if (!inQuote && currentChar == '"')
+                    {
+                        inQuote = true;
+                        quoted = true;
+                    }
+                    else if (inQuote && !escaping && currentChar == '"')
+                    {
+                        inQuote = false;
+                    }
+                    else if (!inQuote && currentChar == '=')
+                    {
+                        tag = current.ToString();
+                        current.Clear();
+                    }
+                    else
+                    {
+                        current.Append(currentChar);
                     }
                 }
+
+                if (current.Length > 0)
+                {
+                    // Commit current
+                    if (tag == null && quoted)
+                    {
+                        tag = "prompt";
+                    }
+                    FinishCurrent();
+                }
+                
+                // foreach (var arg in chunk.Split(' ',
+                //              StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                // {
+                //     var parts = arg.TrimStart('-').Split('=');
+                //
+                //     if (parts.Length == 1)
+                //     {
+                //         request.Parameters[parts[0].ToLowerInvariant()] = "";
+                //     }
+                //     else
+                //     {
+                //         request.Parameters[parts[0].ToLowerInvariant()] = parts[1];
+                //     }
+                // }
             }
 
             if (args.Count(c => c == '"') < 2)
@@ -478,16 +547,18 @@ namespace Diffuser
             }
             else
             {
-                var firstQuote = args.IndexOf('"');
-                var lastQuote = args.LastIndexOf('"');
+                // var firstQuote = args.IndexOf('"');
+                // var lastQuote = args.LastIndexOf('"');
+                //
+                // var prompt = args.Substring(firstQuote, (lastQuote - firstQuote) + 1).Trim('"').Trim();
+                // request.Prompt = prompt;
+                // var argsWithoutPrompt = args.Remove(firstQuote, (lastQuote - firstQuote) + 1);
 
-                var prompt = args.Substring(firstQuote, (lastQuote - firstQuote) + 1).Trim('"').Trim();
-                request.Prompt = prompt;
-                var argsWithoutPrompt = args.Remove(firstQuote, (lastQuote - firstQuote) + 1);
-
-                SetParams(argsWithoutPrompt);
+                SetParams(args);
+                if (request.Parameters.ContainsKey("prompt"))
+                    request.Prompt = request.Parameters["prompt"];
             }
-
+            
             if (request.Parameters.ContainsKey("last"))
             {
                 var targetNick = request.Parameters["last"];
@@ -502,7 +573,7 @@ namespace Diffuser
                     return;
                 }
 
-                var modelRequest = DiffuseUtil.LastRequests[targetTuple];
+                var modelRequest = DiffuseUtil.LastRequests[targetTuple].Clone();
                 foreach (var param in request.Parameters)
                 {
                     modelRequest.Parameters[param.Key] = param.Value;
@@ -514,6 +585,24 @@ namespace Diffuser
                 }
 
                 request = modelRequest;
+                request.Id = Guid.NewGuid();
+            }
+
+            if (!request.Parameters.ContainsKey("negative"))
+            {
+                string? defaultNegative = GetUserDataForSourceAndNick<string>(source, n, "diffuser.negative");
+                if (!string.IsNullOrWhiteSpace(defaultNegative))
+                {
+                    request.Parameters["negative"] = defaultNegative;
+                }
+            }
+
+            if (request.Parameters.ContainsKey("dump"))
+            {
+                foreach ((string key, string val) in request.Parameters)
+                {
+                    SendMessage($"\"{key}\": \"{val}\"", source);
+                }
             }
 
             request.Source = source;
@@ -527,12 +616,20 @@ namespace Diffuser
             }
         }
 
+        void SetNegative(string args, string source, string n)
+        {
+            string negativePrompt = args.Substring(".negative".Length).Trim();
+            SetUserDataForSourceAndNick(source, n, "diffuser.negative", negativePrompt);
+            SendMessage($"Set your default negative prompt to \"{negativePrompt}\"", source);
+        }
+
         void DiffuserMain()
         {
             DiffuseUtil = new DiffuseUtil(this);
             //GptUtil = new GptUtil(this);
 
-            new Thread(DiffuseUtil.ProcessorThread).Start();
+            // new Thread(DiffuseUtil.ProcessorThread).Start();
+            new Thread((ThreadStart)delegate { DiffuseUtil.ProcessorThread().Wait(); }).Start();
         }
     }
 }

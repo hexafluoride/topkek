@@ -12,7 +12,7 @@ public interface IChatSession
 
     void WipeHistory();
     void AddHistoryLine(IChatLine line, bool decodeImmediately);
-    IChatLine? SimulateChatFromPerson(string person);
+    IChatLine? SimulateChatFromPerson(string person, string? prefix = null);
     void RollbackHistory(int n);
     IChatLine? ProcessChatLine(string args, string source, string nick, string ownNick);
     void UseGptInstance(NetworkedGptInstance instance);

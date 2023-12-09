@@ -16,6 +16,7 @@ using HeimdallBase;
 using Microsoft.VisualBasic.CompilerServices;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using JsonSerializer = System.Text.Json.JsonSerializer;
 
 namespace Diffuser
 {
@@ -34,8 +35,8 @@ namespace Diffuser
         public Queue<TextToImageRequest> PendingRequests = new();
         public Dictionary<(string, string), TextToImageRequest> LastRequests = new();
         public Dictionary<Guid, List<TextToImageResult>> Results = new(); 
-        public const int TotalQueueMax = 10;
-        public const int PerUserQueueMax = 2;
+        public const int TotalQueueMax = 15;
+        public const int PerUserQueueMax = 3;
         private HttpClient HttpClient = new();
         private HttpClient GanClient = new();
         private HttpClient ImageClient = new();
@@ -94,19 +95,19 @@ namespace Diffuser
                     req.Parameters["seed"] = seed.ToString();
                 }
 
-                int w = 512, h = 512, copies = 1, steps = 60;
+                int w = 1024, h = 1024, copies = 4, steps = 60;
                 if (req.Parameters.ContainsKey("copies") &&
                     int.TryParse(req.Parameters["copies"], out int rawCopies))
                 {
-                    if (rawCopies >= 1 && rawCopies <= 4)
+                    if (rawCopies >= 1 && rawCopies <= 8)
                     {
                         copies = rawCopies;
-                        if (rawCopies == 4)
-                        {
-                            w = 448;
-                            h = 448;
-                            steps = 45;
-                        }
+                        // if (rawCopies == 4)
+                        // {
+                        //     w = 448;
+                        //     h = 448;
+                        //     steps = 45;
+                        // }
                     }
                 }
 
@@ -131,7 +132,7 @@ namespace Diffuser
                 if (req.Parameters.ContainsKey("width") &&
                     int.TryParse(req.Parameters["width"], out int rawWidth))
                 {
-                    if (rawWidth >= 128 && rawWidth <= 1024)
+                    if (rawWidth >= 128 && rawWidth <= 4096)
                     {
                         w = rawWidth - (rawWidth % 8);
                     }
@@ -140,7 +141,7 @@ namespace Diffuser
                 if (req.Parameters.ContainsKey("height") &&
                     int.TryParse(req.Parameters["height"], out int rawHeight))
                 {
-                    if (rawHeight >= 128 && rawHeight <= 1024)
+                    if (rawHeight >= 128 && rawHeight <= 4096)
                     {
                         h = rawHeight - (rawHeight % 8);
                     }
@@ -157,7 +158,7 @@ namespace Diffuser
 
                 var score = (1024d * 1024d) / (w * h);
                 score /= (Math.Sqrt(copies));
-                int ceilingSteps = 100;
+                int ceilingSteps = 400;
                 int allowedSteps = (int) (ceilingSteps * score);
                 
                 if (steps > allowedSteps)
@@ -172,7 +173,7 @@ namespace Diffuser
                 //ProcessRequest(req);
 
                 if (PendingRequests.Count >= 2)
-                    return $"You are #{PendingRequests.Count} in the queue. {notes}";
+                    return $"You are #{PendingRequests.Count} in the queue with seed {req.Parameters["seed"]}. {notes}";
                 else
                 {
                     return string.IsNullOrWhiteSpace(notes) ? null : notes;
@@ -180,11 +181,70 @@ namespace Diffuser
             }
         }
 
-        public void ProcessorThread()
+        public async Task ProcessorThread()
         {
+            Dictionary<string, Guid> endpoints = Config.GetArray<string>("diffusion.endpoints").ToDictionary(e => e, e => Guid.Empty);
+
+            var endpointKeys = endpoints.Keys.ToList();
+            async Task<string> GetNextFreeEndpointAsync()
+            {
+                // go through endpoints round robin until one is free
+                int i = 0, j = 0;
+                while (true)
+                {
+                    string endpoint = endpointKeys[i++];
+                    if (i >= endpointKeys.Count)
+                    {
+                        i = 0;
+                        j++;
+                    }
+
+                    Guid currentRequest = endpoints[endpoint];
+                    if (currentRequest == Guid.Empty || Results.ContainsKey(currentRequest))
+                    {
+                        return endpoint;
+                    }
+
+                    if (j > 0)
+                    {
+                        await Task.Delay(15);
+                        if (i == 0 && j % 100 == 0)
+                        {
+                            Console.WriteLine($"endpoints {string.Join(",", endpointKeys)} busy on {string.Join(',', endpointKeys.Select(k => endpoints[k]))}");
+                        }
+                    }
+                }
+            }
             while (true)
             {
-                ProcessRequest();
+                TextToImageRequest request;
+                // string nextEndpoint = await GetNextFreeEndpointAsync();
+                await GetNextFreeEndpointAsync();
+                while (!PendingRequests.TryDequeue(out request))
+                    await Task.Delay(10);
+
+                int copies = 4;
+                if (request.Parameters.ContainsKey("copies") &&
+                    int.TryParse(request.Parameters["copies"], out int rawCopies))
+                {
+                    if (rawCopies >= 1 && rawCopies <= 8)
+                    {
+                        copies = rawCopies;
+                    }
+                }
+                string[] nextEndpoints = endpointKeys.Where(e => endpoints[e] == Guid.Empty || Results.ContainsKey(endpoints[e])).ToArray();
+                var schedule = CreateSchedule(copies, nextEndpoints);
+                
+                foreach ((var nextEndpoint, int count) in schedule)
+                {
+                    if (count != 0)
+                    {
+                        endpoints[nextEndpoint] = request.Id;
+                        Console.WriteLine($"Scheduling {request.Id} to {nextEndpoint}");
+                    }
+                }
+                
+                ProcessRequest(request, schedule);
             }
         }
 
@@ -240,26 +300,36 @@ namespace Diffuser
                 return new List<int>();
             }
         }
-        
-        private void ProcessRequest()
-        {
-            TextToImageRequest request = default;
-            while (!PendingRequests.TryPeek(out request))
-            {
-                Thread.Sleep(100);
-            }
 
+        private Dictionary<string, int> CreateSchedule(int count, string[] endpoints)
+        {
+            Dictionary<string, int> schedule = new();
+            for (int i = 0; i < count; i++)
+            {
+                string nextEndpoint = endpoints[i % endpoints.Length];
+                if (!schedule.ContainsKey(nextEndpoint))
+                    schedule[nextEndpoint] = 0;
+                schedule[nextEndpoint]++;
+            }
+            
+            Console.WriteLine($"Scheduled {count} tiles to {endpoints.Length} endpoints: {JsonSerializer.Serialize(schedule)}");
+
+            return schedule;
+        }
+
+        private async Task ProcessRequest(TextToImageRequest request, Dictionary<string, int> endpoints)
+        {
             try
             {
                 var patchMatchBinary = Config.GetString("diffusion.patchmatch");
                 bool canPatchMatch = File.Exists(patchMatchBinary);
 
                 var diffusionDir = Config.GetString("diffusion.storage");
-                var widthSanitized = 512;
-                var heightSanitized = 512;
-                var copies = 1;
-                var steps = 60;
-                var cfg = 7.0;
+                var widthSanitized = 1024;
+                var heightSanitized = 1024;
+                var copies = 4;
+                var steps = 8;
+                var cfg = 1d;
                 var seed = Random.Next(1, int.MaxValue / 2);
                 bool doGan = false;
                 string picks = "";
@@ -267,20 +337,37 @@ namespace Diffuser
                 string initImage = null;
                 string mask = null;
                 var img2imgPromptStrength = 1d;
+                string negativePrompt = "";
+                string refiner = "expert_ensemble_refiner";
+                string lora = "";
 
+                if (request.Parameters.ContainsKey("lora") && request.Nick == "kate")
+                {
+                    lora = request.Parameters["lora"];
+                }
 
+                if (request.Parameters.ContainsKey("negative"))
+                {
+                    negativePrompt = request.Parameters["negative"];
+                }
+
+                if (request.Parameters.ContainsKey("refiner"))
+                {
+                    refiner = request.Parameters["refiner"];
+                }
+                
                 if (request.Parameters.ContainsKey("copies") &&
                     int.TryParse(request.Parameters["copies"], out int rawCopies))
                 {
-                    if (rawCopies >= 1 && rawCopies <= 4)
+                    if (rawCopies >= 1 && rawCopies <= 8)
                     {
                         copies = rawCopies;
 
-                        if (copies == 4 && !request.Parameters.ContainsKey("img"))
+                        if (copies >= 4 && !request.Parameters.ContainsKey("img"))
                         {
-                            widthSanitized = 448;
-                            heightSanitized = 448;
-                            steps = 50;
+                            widthSanitized = 1024;
+                            heightSanitized = 1024;
+                            steps = 6;
                         }
                     }
                 }
@@ -295,7 +382,7 @@ namespace Diffuser
                 if (request.Parameters.ContainsKey("width") &&
                     int.TryParse(request.Parameters["width"], out int rawWidth))
                 {
-                    if (rawWidth >= 128 && rawWidth <= 1024)
+                    if (rawWidth >= 128 && rawWidth <= 4096)
                     {
                         widthSanitized = rawWidth - (rawWidth % 8);
                     }
@@ -311,7 +398,7 @@ namespace Diffuser
                 if (request.Parameters.ContainsKey("height") &&
                     int.TryParse(request.Parameters["height"], out int rawHeight))
                 {
-                    if (rawHeight >= 128 && rawHeight <= 1024)
+                    if (rawHeight >= 128 && rawHeight <= 4096)
                     {
                         heightSanitized = rawHeight - (rawHeight % 8);
                     }
@@ -337,9 +424,9 @@ namespace Diffuser
                     {
                         try
                         {
-                            using (var resp = ImageClient.GetAsync(maybeUri).Result)
+                            using (var resp = await ImageClient.GetAsync(maybeUri))
                             {
-                                byte[] data = resp.Content.ReadAsByteArrayAsync().Result;
+                                byte[] data = await resp.Content.ReadAsByteArrayAsync();
                                 MemoryStream ms = new MemoryStream(data);
                                 bitmap = new Bitmap(ms);
 
@@ -521,60 +608,131 @@ namespace Diffuser
                 if (request.Parameters.ContainsKey("cfg") &&
                     double.TryParse(request.Parameters["cfg"], out double rawCfg))
                 {
-                    if (rawCfg >= 1d && rawCfg <= 20)
+                    if (rawCfg >= 0.001d && rawCfg <= 20)
                     {
                         cfg = rawCfg;
                     }
                 }
 
-                doGan = request.Parameters.ContainsKey("gan");
+                string loraFilename = "";
+                double loraStrength = 0.8;
 
-                var encodedObj = new
+                if (request.Parameters.ContainsKey("lora-filename"))
                 {
-                    input = new 
-                    {
-                        prompt = request.Prompt,
-                        width = widthSanitized,
-                        height = heightSanitized,
-                        guidance_scale = cfg,
-                        num_inference_steps = steps,
-                        num_outputs = copies,
-                        seed,
-                        latents_batch_pick = picks,
-                        latents_batch_size = latentsBatchSize,
-                        init_image = initImage,
-                        mask,
-                        prompt_strength = img2imgPromptStrength
-                    }
-                };
-                var encoded = JsonConvert.SerializeObject(encodedObj, JsonSerializerSettings);
+                    loraFilename = request.Parameters["lora-filename"];
+                }
 
-                request.Parameters["actualRequest"] = encoded;
-                Directory.CreateDirectory($"{diffusionDir}/requests");
-                File.WriteAllText($"{diffusionDir}/requests/{request.Id}.json", JsonConvert.SerializeObject(request));
-
-                var content = new StringContent(encoded, Encoding.UTF8, "application/json");
+                if (request.Parameters.ContainsKey("lora-scale") &&
+                    double.TryParse(request.Parameters["lora-scale"], out double _loraStrength) && _loraStrength > 0 &&
+                    _loraStrength <= 1)
+                {
+                    loraStrength = _loraStrength;
+                }
 
                 var sw = Stopwatch.StartNew();
-                var response = HttpClient.PostAsync(Config.GetString("diffusion.endpoint"), content).Result;
+                doGan = request.Parameters.ContainsKey("gan");
+                int totalCopies = copies;
+                // double copiesPerEndpoint = totalCopies / (double)endpoints.Length;
+                var tiles = new string[totalCopies];
+                var requests = new List<Task<HttpResponseMessage>>();
+                Dictionary<string, string> actualRequests = new();
+                int requestedTiles = 0;
+
+                string[] endpointsList = endpoints.Keys.ToArray();
+                for (int i = 0; i < endpoints.Count; i++)
+                {
+                    var endpoint = endpointsList[i];
+                    int endpointCount = endpoints[endpoint];
+                    if (endpointCount == 0)
+                    {
+                        continue;
+                    }
+                    requestedTiles += endpointCount;
+                    var encodedObj = new
+                    {
+                        input = new
+                        {
+                            prompt = request.Prompt,
+                            negative_prompt = negativePrompt,
+                            width = widthSanitized,
+                            height = heightSanitized,
+                            guidance_scale = cfg,
+                            num_inference_steps = steps,
+                            num_outputs = endpointCount,
+                            seed = seed + (i * 10000000),
+                            disable_safety_checker = true,
+                            apply_watermark = false,
+                            refine = refiner,
+                            image = initImage,
+                            mask,
+                            lora_tag = lora,
+                            lora_scale = loraStrength,
+                            lora_filename = loraFilename,
+                            // latents_batch_pick = picks,
+                            // latents_batch_size = latentsBatchSize,
+                            // init_image = initImage,
+                            // mask,
+                            prompt_strength = img2imgPromptStrength
+                        }
+                    };
+                    var encoded = JsonConvert.SerializeObject(encodedObj, JsonSerializerSettings);
+
+                    // request.Parameters["actualRequest"] = encoded;
+                    actualRequests[endpoint] = encoded;
+
+                    var content = new StringContent(encoded, Encoding.UTF8, "application/json");
+                    requests.Add(HttpClient.PostAsync(endpoint, content));
+                }
+
+                request.Parameters["actualRequest"] = JsonSerializer.Serialize(actualRequests);
+                Directory.CreateDirectory($"{diffusionDir}/requests");
+                await File.WriteAllTextAsync($"{diffusionDir}/requests/{request.Id}.json",
+                    JsonConvert.SerializeObject(request));
+
+                bool succeeded = true;
+                string failMessage = "";
+                int savedTiles = 0;
+                for (int i = 0; i < requests.Count; i++)
+                {
+                    var endpoint = endpointsList[i];
+                    var response = await requests[i];
+                    string responseText = await response.Content.ReadAsStringAsync();
+                    var responseParsed = JObject.Parse(responseText);
+                    if (!responseParsed.ContainsKey("status") ||
+                        responseParsed["status"].Value<string>() != "succeeded")
+                    {
+                        succeeded = false;
+                        Console.WriteLine($"Endpoint {endpoint} failed: {responseText}");
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            failMessage = $"Status code: {response.StatusCode}";
+                        }
+
+                        continue;
+                    }
+
+                    var subTiles = responseParsed["output"].Select(t => t.Value<string>()).ToList();
+                    for (int j = 0; j < subTiles.Count; j++)
+                    {
+                        tiles[savedTiles + j] = subTiles[j];
+                    }
+                    savedTiles += subTiles.Count;
+                }
+
+                if (savedTiles != tiles.Length)
+                {
+                    succeeded = false;
+                    failMessage = $"Expected {tiles.Length} tiles, got {savedTiles}";
+                }
+
+                if (!succeeded)
+                {
+                    Diffuser.SendMessage($"{request.Nick}: Something went wrong while serving your request. Sorry! {failMessage}",
+                        request.Source);
+                    Results[request.Id] = new List<TextToImageResult>();
+                    return;
+                }
                 
-                if (!response.IsSuccessStatusCode)
-                {
-                    Diffuser.SendMessage($"{request.Nick}: Something went wrong while serving your request. Sorry! Status code: {response.StatusCode}",
-                        request.Source);
-                    return;
-                }
-
-                var responseParsed = JObject.Parse(response.Content.ReadAsStringAsync().Result);
-                if (!responseParsed.ContainsKey("status") || responseParsed["status"].Value<string>() != "succeeded")
-                {
-                    Diffuser.SendMessage(
-                        $"{request.Nick}: Something went really wrong while serving your request. Sorry!",
-                        request.Source);
-                    return;
-                }
-
-                var tiles = responseParsed["output"].Select(t => t.Value<string>()).ToArray();
                 var tilesGan = new string[tiles.Length];
                 var tilesOld = new string[tiles.Length];
                 bool ganFailed = false;
@@ -597,9 +755,8 @@ namespace Diffuser
                                 }
                             };
                             
-                            var ganResp = GanClient.PostAsJsonAsync(ganEndpoint, ganReq).Result;
-                            var resBody = ganResp.Content.ReadAsStringAsync().Result;
-                            var parsed = JsonDocument.Parse(resBody);
+                            var ganResp = await GanClient.PostAsJsonAsync(ganEndpoint, ganReq);
+                            var parsed = await JsonDocument.ParseAsync(await ganResp.Content.ReadAsStreamAsync());
                             var ganImageStr = parsed.RootElement.GetProperty("output").GetString() ?? throw new Exception("Failed to decode GAN result");
 
                             if (!ganImageStr.StartsWith("data:image/png;base64,"))
@@ -658,12 +815,12 @@ namespace Diffuser
                     if (!string.IsNullOrWhiteSpace(tilesOld[i]))
                     {
                         var oldTileBytes = Convert.FromBase64String(tilesOld[i].Substring("data:image/png;base64,".Length));
-                        File.WriteAllBytes($"{diffusionDir}/results/{resultObj.Id}.pre-gan.png", oldTileBytes);
+                        await File.WriteAllBytesAsync($"{diffusionDir}/results/{resultObj.Id}.pre-gan.png", oldTileBytes);
                         resultObj.Metadata["gan"] = "true";
                     }
 
-                    File.WriteAllBytes($"{diffusionDir}/results/{resultObj.Id}.png", tileBytes);
-                    File.WriteAllText($"{diffusionDir}/results/{resultObj.Id}.json",
+                    await File.WriteAllBytesAsync($"{diffusionDir}/results/{resultObj.Id}.png", tileBytes);
+                    await File.WriteAllTextAsync($"{diffusionDir}/results/{resultObj.Id}.json",
                         JsonConvert.SerializeObject(resultObj));
                     
                     resultObjects.Add(resultObj);
@@ -731,6 +888,24 @@ namespace Diffuser
                 File.Copy($"{diffusionDir}/results/tiled/{request.Id}.png",
                     $"{diffusionOutputDir}/{shortIdNumeric}.png");
 
+                if (File.Exists("/usr/bin/cwebp"))
+                {
+                    try
+                    {
+                        Process process = Process.Start("/usr/bin/cwebp",
+                            $"-q 100 \"{diffusionOutputDir}/{shortIdNumeric}.png\" -o \"{diffusionOutputDir}/{shortIdNumeric}.webp\"");
+                        Console.WriteLine($"started cwebp with pid {process.Id}");
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine($"failed to webp compress: {e}");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("did not find cwebp");
+                }
+
                 Diffuser.SendMessage(
                     $"{request.Nick}: your diffusion for prompt \"{request.Prompt.Substring(0, Math.Min(20, request.Prompt.Length))}{(request.Prompt.Length > 20 ? "..." : "")}\" with seed {seed}: https://{diffusionHost}/{shortIdNumeric} ({sw.Elapsed.TotalSeconds:0.00}s{(ganFailed ? ", GAN upscaling failed, sorry!" : "")})",
                     request.Source);
@@ -741,10 +916,6 @@ namespace Diffuser
             {
                 Console.WriteLine(e);
                 Diffuser.SendMessage($"{request.Nick}: Exception thrown: {e.Message}", request.Source);
-            }
-            finally
-            {
-                PendingRequests.Dequeue();
             }
         }
         
@@ -784,6 +955,19 @@ namespace Diffuser
         public string Nick { get; set; }
         public string Prompt { get; set; }
         public Dictionary<string, string> Parameters { get; set; } = new();
+
+        public TextToImageRequest Clone()
+        {
+            return new TextToImageRequest()
+            {
+                Id = Id,
+                Timestamp = Timestamp,
+                Source = Source,
+                Nick = Nick,
+                Prompt = Prompt,
+                Parameters = new Dictionary<string, string>(Parameters)
+            };
+        }
     }
 
     public class TextToImageResult

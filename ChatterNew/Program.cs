@@ -49,12 +49,14 @@ namespace ChatterNew
                 // {".fill", FillForm},
                 // {".gptram", GetRam},
                 // {".notify", Notify}
+                {".gptfuse", GptDiffuse},
                 {".dump", DumpSource},
                 {".rollback", Rollback},
                 {".prompt", HandlePrompt},
                 {".editprompt", EnterPromptEditing},
                 {".endprompt", QuitPromptEditing},
-                {".repeat", HandleRepeatFilter}
+                {".repeat", HandleRepeatFilter},
+                {".reroll", Reroll}
             };
 
             // new Thread(ChatLoop).Start();
@@ -67,6 +69,111 @@ namespace ChatterNew
         private Dictionary<string, string> PromptAuthors = new();
         private Dictionary<string, DateTime> PromptEditTime = new();
 
+        public void GptDiffuse(string args, string source, string n)
+        {
+            IChatSession? session = ChatterUtil.GetChatSession(source, n, args);
+            if (session is null)
+            {
+                SendMessage("no session", source);
+                return;
+            }
+
+            Complete($".complete {session.Config.AssignedNick} .diffuse copies=4 \"", source, n);
+        }
+
+        public void Complete(string args, string source, string n)
+        {
+            IChatSession? session = ChatterUtil.GetChatSession(source, n, args);
+            if (session is null)
+            {
+                SendMessage("no session", source);
+                return;
+            }
+
+            args = args.Substring(".complete".Length).TrimStart();
+            string targetNick = args.Split(' ')[0];
+            string completionPrefix = args.Substring(targetNick.Length + 1).TrimStart();
+            
+
+            UsageRecord record = GetThrottleWarning(args, source, n, involuntary: false);
+            if (record.Warn)
+            {
+                SendMessage("You are spamming me a bit too much. Give me some room to breathe between requests.", source);
+                return;
+            }
+
+            if (!record.Allow)
+            {
+                Console.WriteLine($"Usage not allowed: {source}");
+                return;
+            }
+
+            IChatLine? generatedLine = session.SimulateChatFromPerson(targetNick, completionPrefix);
+            if (generatedLine is null)
+            {
+                SendMessage("oops", source);
+                return;
+            }
+            SendMessage(generatedLine.Contents, source);
+        
+            RecordUsage(record);
+            ChatterUtil.SaveSession(source);
+        }
+
+        public void Reroll(string args, string source, string n)
+        {
+            IChatSession? session = ChatterUtil.GetChatSession(source, n, args);
+            if (session is null)
+            {
+                SendMessage("no session", source);
+                return;
+            }
+            
+            UsageRecord record = GetThrottleWarning(args, source, n, involuntary: true);
+            // bool shouldReply = shouldReply && record.Allow;
+            if (!record.Allow)
+            {
+                SendMessage("Let's cool down for a bit.", source);
+                return;
+            }
+
+            int times = 1;
+            if (!int.TryParse(args.Substring(".reroll".Length).Trim(), out times) || times < 1 || times > 4)
+            {
+                times = 1;
+            }
+
+            var lastSelfLine = session.History.LastOrDefault(line => line.Origin == "generated");
+            if (lastSelfLine is null)
+            {
+                SendMessage("I can't see any messages to reroll.", source);
+                return;
+            }
+
+            var lastSelfLineIndex = session.History.IndexOf(lastSelfLine);
+            var subsequentLines = session.History.Skip(lastSelfLineIndex + 1).ToList();
+            session.RollbackHistory(subsequentLines.Count);
+
+            for (int i = 0; i < times; i++)
+            {
+                session.RollbackHistory(1);
+                var nextSelfLine = session.SimulateChatFromPerson(session.Config.AssignedNick);
+                if (nextSelfLine is null)
+                {
+                    // restore history
+                    session.AddHistoryLine(lastSelfLine, false);
+                    subsequentLines.ForEach(l => session.AddHistoryLine(l, false));
+                    SendMessage("oops", source);
+                    return;
+                }
+
+                SendMessage(nextSelfLine.Contents, source);
+            }
+
+            subsequentLines.ForEach(l => session.AddHistoryLine(l, false));
+            RecordUsage(record);
+        }
+        
         public void QuitPromptEditing(string args, string source, string n)
         {
             IChatSession? session = ChatterUtil.GetChatSession(source, n, args);
@@ -436,11 +543,27 @@ namespace ChatterNew
                 return;
             }
 
+            int chatCount = 1;
             string nick = session.Config.AssignedNick;
             if (args.StartsWith(".chatas"))
             {
                 args = args.Substring(".chatas".Length).Trim();
                 nick = args;
+            }
+            else if (args.StartsWith(".chat "))
+            {
+                args = args.Substring(".chat".Length).Trim();
+                if (int.TryParse(args, out chatCount))
+                {
+                    if (chatCount < 1 || chatCount > 4)
+                    {
+                        chatCount = 1;
+                    }
+                }
+                else
+                {
+                    chatCount = 1;
+                }
             }
 
             UsageRecord record = GetThrottleWarning(args, source, n, involuntary: false);
@@ -455,15 +578,20 @@ namespace ChatterNew
                 Console.WriteLine($"Usage not allowed: {source}");
                 return;
             }
-            
-            IChatLine? generatedLine = session.SimulateChatFromPerson(nick);
-            if (generatedLine is null)
+
+            for (int i = 0; i < chatCount; i++)
             {
-                SendMessage("oops", source);
-                return;
+                IChatLine? generatedLine = session.SimulateChatFromPerson(nick);
+                if (generatedLine is null)
+                {
+                    SendMessage("oops", source);
+                    return;
+                }
+                SendMessage(generatedLine.Contents, source);
             }
-            
-            SendMessage(generatedLine.Contents, source);
+
+            Thread.Sleep(500);
+
             RecordUsage(record);
             ChatterUtil.SaveSession(source);
         }
@@ -657,8 +785,23 @@ namespace ChatterNew
             {
                 return;
             }
-            session.WipeHistory();
-            SendMessage($"okay", source);
+
+            if (args.Trim().ToLowerInvariant() == ".wipeself")
+            {
+                int currentLineCount = session.History.Count;
+                var cleanedHistory = session.History.Where(l => l.Origin != "generated").ToList();
+                session.WipeHistory();
+                for (int i = 0; i < cleanedHistory.Count; i++)
+                {
+                    session.AddHistoryLine(cleanedHistory[i], i == cleanedHistory.Count - 1);
+                }
+                SendMessage($"okay, {currentLineCount} -> {session.History.Count} lines", source);
+            }
+            else
+            {
+                session.WipeHistory();
+                SendMessage($"okay", source);
+            }
         }
 
         void HandlePonder(string args, string source, string n)

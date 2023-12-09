@@ -142,6 +142,11 @@ public class ChatSession : IChatSession
         SynchronizeHistoryToContext();
     }
 
+    public void AssignNewHistory(IList<ChatLine> newHistoryLines)
+    {
+        throw new NotImplementedException();
+    }
+
     private bool ShouldPruneHistory => Context.InputTokens.Count >= Config.TrimStart;
     private void PruneHistory(int room = 0)
     {
@@ -194,7 +199,7 @@ public class ChatSession : IChatSession
     
     private List<List<int>> LastChatPrefixes = new();
     
-    public IChatLine? SimulateChatFromPerson(string person)
+    public IChatLine? SimulateChatFromPerson(string person, string? prefix = null)
     {
         if (ShouldPruneHistory)
         {
@@ -202,13 +207,19 @@ public class ChatSession : IChatSession
         }
         
         string prompt = $"<{person}>";
+        // List<int> prefixTokens = new();
+        if (prefix is not null)
+        {
+            prompt += $" {prefix}";
+            // prefixTokens 
+        }
         List<int> promptTokens = TokenizeSpecial(prompt);
         Context.AddTokens(promptTokens);
 
         // TODO: better sampling loop
         List<int> sampledTokens = new List<int>();
 
-        int maxTokens = 80;
+        int maxTokens = 100;
         int minTokens = Random.Shared.Next(1, 10);
         
         for (int i = 0; i < maxTokens; i++)
@@ -260,15 +271,16 @@ public class ChatSession : IChatSession
 
         if (sampledTokens.Any())
         {
-            var prefix = sampledTokens.Take(Math.Min(sampledTokens.Count, 1)).ToList();
-            LastChatPrefixes.Add(prefix);
+            var startingTokens = sampledTokens.Take(Math.Min(sampledTokens.Count, 1)).ToList();
+            LastChatPrefixes.Add(startingTokens);
             while (LastChatPrefixes.Count > Config.NoRepeatLines && LastChatPrefixes.Any())
             {
                 LastChatPrefixes.RemoveAt(0);
             }
         }
         
-        ChatLine line = new ChatLine(person, generationResult, promptTokens.Concat(sampledTokens).ToList());
+        ChatLine line = new ChatLine(person, (prefix ?? "") + generationResult, promptTokens.Concat(sampledTokens).ToList());
+        line.Origin = "generated";
         HistoryInternal.Add(line);
         KeepDecoding = true;
         return line;

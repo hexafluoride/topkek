@@ -8,8 +8,9 @@ namespace ChatSharp.Events
     public class ErronousNickEventArgs : EventArgs
     {
         private static Random random;
-        private static string GenerateRandomNick()
+        private static string GenerateRandomNick(string oldNick)
         {
+            return oldNick + '_';
             const string nickCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
             if (random == null)
@@ -27,7 +28,7 @@ namespace ChatSharp.Events
         public ErronousNickEventArgs(string invalidNick)
         {
             InvalidNick = invalidNick;
-            NewNick = GenerateRandomNick();
+            NewNick = GenerateRandomNick(invalidNick);
             DoNotHandle = false;
         }
     }
